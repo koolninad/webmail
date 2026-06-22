@@ -687,9 +687,10 @@ export function FileBrowser({
         ? `/${resource.name}`
         : `${currentPath}/${resource.name}`;
       onNavigate(newPath, resource.id);
-    } else if (isPreviewable(resource.name)) {
+    } else if (isPreviewable(resource.name) || hasFileViewerFor(resource.name)) {
       // Images use the lightweight image preview; everything else (incl. plugin
-      // viewers) goes through onPreviewFile.
+      // viewers like OnlyOffice, whose office extensions aren't "previewable"
+      // but are openable) goes through onPreviewFile.
       if (isImageFile(resource.name) && !hasFileViewerFor(resource.name)) {
         onPreviewImage(resource.name);
       } else {
@@ -911,6 +912,13 @@ export function FileBrowser({
             ? `/${resource.name}`
             : `${currentPath}/${resource.name}`;
           onNavigate(newPath, resource.id);
+        } else if (resource && (isPreviewable(resource.name) || hasFileViewerFor(resource.name))) {
+          // Openable (previewable or claimed by a viewer plugin like OnlyOffice)
+          if (isImageFile(resource.name) && !hasFileViewerFor(resource.name)) {
+            onPreviewImage(resource.name);
+          } else {
+            onPreviewFile(resource.name);
+          }
         } else if (resource) {
           onDownload(resource.name);
         }
@@ -926,7 +934,7 @@ export function FileBrowser({
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedResources, resources, currentPath, showSearch, showNewFolder, renameTarget, onDelete, onBatchDelete, onSelectAll, onClearSelection, onNavigate, onDownload, onCut, onCopy, onPaste, clipboard, handleNavigateUp]);
+  }, [selectedResources, resources, currentPath, showSearch, showNewFolder, renameTarget, onDelete, onBatchDelete, onSelectAll, onClearSelection, onNavigate, onDownload, onPreviewFile, onPreviewImage, onCut, onCopy, onPaste, clipboard, handleNavigateUp]);
 
   const allSelected = resources.length > 0 && selectedResources.size === resources.length;
   const someSelected = selectedResources.size > 0 && !allSelected;
@@ -1684,11 +1692,23 @@ export function FileBrowser({
             style={{ left: contextMenu.x, top: contextMenu.y }}
             onClick={(e) => e.stopPropagation()}
           >
-            {!resources.find(r => r.name === contextMenu.name)?.isDirectory && isPreviewable(contextMenu.name) && (
+            {!resources.find(r => r.name === contextMenu.name)?.isDirectory && hasFileViewerFor(contextMenu.name) && (
               <button
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
                 onClick={() => {
-                  if (isImageFile(contextMenu.name) && !hasFileViewerFor(contextMenu.name)) {
+                  onPreviewFile(contextMenu.name);
+                  setContextMenu(null);
+                }}
+              >
+                <FileText className="w-4 h-4" />
+                {t("open")}
+              </button>
+            )}
+            {!resources.find(r => r.name === contextMenu.name)?.isDirectory && isPreviewable(contextMenu.name) && !hasFileViewerFor(contextMenu.name) && (
+              <button
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
+                onClick={() => {
+                  if (isImageFile(contextMenu.name)) {
                     onPreviewImage(contextMenu.name);
                   } else {
                     onPreviewFile(contextMenu.name);

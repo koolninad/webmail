@@ -2973,6 +2973,7 @@
     "details": "Details",
     "path": "Path",
     "preview": "Preview",
+    "open": "Open",
     "preview_error": "Failed to load preview",
     "cut": "Cut",
     "copy": "Copy",
