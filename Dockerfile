@@ -17,6 +17,11 @@ ENV NEXT_PUBLIC_DEFAULT_LOCALE=$NEXT_PUBLIC_DEFAULT_LOCALE
 # `git rev-parse` inside the build can't find it - CI must pass it in.
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=$GIT_COMMIT
+# Browser Web Push relay. Inlined into the client bundle by next at build time
+# (NEXT_PUBLIC_*); without it lib/web-push.ts falls back to the upstream
+# bulwarkmail relay. Point it at our self-hosted relay.
+ARG NEXT_PUBLIC_PUSH_RELAY_URL=
+ENV NEXT_PUBLIC_PUSH_RELAY_URL=$NEXT_PUBLIC_PUSH_RELAY_URL
 RUN npx next build --webpack
 
 FROM node:24-alpine AS runner
