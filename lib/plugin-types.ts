@@ -136,6 +136,16 @@ export interface PluginManifest {
    * permission. Validated at install time.
    */
   apiPostPaths?: string[];
+  /**
+   * Lowercase file extensions (no dot) this plugin claims as a full-view file
+   * viewer in the Files section, e.g. ["docx","xlsx","pptx"]. When the user
+   * opens a matching file, the host renders this plugin's 'file-viewer' slot
+   * instead of the built-in FilePreviewModal, passing the opened file as
+   * extraProps.file (FileViewerTarget). The plugin must also offer the
+   * 'file-viewer' slot in its entrypoint and declare the relevant permissions
+   * (files:read / files:write) plus any apiPostPaths for its config endpoint.
+   */
+  fileViewerExtensions?: string[];
 
   // ─── Marketplace media (NOT shipped in the runtime zip) ──────
   /**
@@ -246,6 +256,13 @@ export interface InstalledPlugin {
    * skip the consent prompt (admin pre-approval).
    */
   grantedPermissions?: string[];
+  /**
+   * Lowercase file extensions (no dot) this plugin claims as a full-view file
+   * viewer, carried over from the manifest at install time. When the user opens
+   * a matching file in Files, the host renders this plugin's 'file-viewer' slot
+   * instead of the built-in FilePreviewModal. e.g. ['docx','xlsx','pptx'].
+   */
+  fileViewerExtensions?: string[];
 }
 
 // ─── UI Slots ────────────────────────────────────────────────
@@ -264,7 +281,11 @@ export type SlotName =
   | 'context-menu-email'
   | 'navigation-rail-bottom'
   | 'calendar-event-actions'
-  | 'admin-plugin-page';
+  | 'admin-plugin-page'
+  // Full-view slot rendered in place of the built-in file preview when a
+  // plugin has claimed the opened file's extension via fileViewerExtensions.
+  // The host passes the opened file as extraProps.file (FileViewerTarget).
+  | 'file-viewer';
 
 export interface SlotRegistration {
   pluginId: string;
@@ -464,6 +485,19 @@ export interface FileResourceView {
   mimeType: string;
   path: string;
   modified: string;
+}
+
+/** The opened file handed to a 'file-viewer' slot via extraProps.file. */
+export interface FileViewerTarget {
+  /** FileNode id (JMAP). */
+  id: string;
+  name: string;
+  /** DAV-relative path (FileNode name-hierarchy path, no leading slash). */
+  path: string;
+  mimeType: string;
+  size: number;
+  /** Version hint (etag/lastModified) if known; else null. */
+  version: string | null;
 }
 
 export interface IdentityView {

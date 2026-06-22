@@ -25,6 +25,9 @@ import { FileBrowser } from "@/components/files/file-browser";
 import type { FileNodeRights } from "@/lib/jmap/types";
 import { ImagePreviewModal } from "@/components/files/image-preview-modal";
 import { FilePreviewModal } from "@/components/files/file-preview-modal";
+import { OnlyOfficeViewer } from "@/components/files/onlyoffice-viewer";
+import { fileViewerPluginFor } from "@/lib/plugin-sandbox/file-viewers";
+import type { FileViewerTarget } from "@/lib/plugin-types";
 import { loadFilesSettings } from "@/components/files/files-settings-dialog";
 import type { FolderLayout } from "@/components/files/files-settings-dialog";
 import { AppTopBannerSlot } from "@/components/plugins/app-top-banner-slot";
@@ -111,6 +114,8 @@ export default function FilesPage() {
   const { dialogProps: confirmDialogProps, confirm: confirmDialog } = useConfirmDialog();
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<string | null>(null);
+  // Set when the opened file is claimed by a 'file-viewer' plugin (e.g. OnlyOffice).
+  const [viewerFile, setViewerFile] = useState<FileViewerTarget | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [detailName, setDetailName] = useState<string | null>(null);
 
@@ -388,9 +393,25 @@ export default function FilesPage() {
   }, [addRecentFile, findResourceId]);
 
   const handlePreviewFile = useCallback((name: string) => {
+    // If a plugin claims this extension as a full-view viewer, hand it the file
+    // instead of opening the built-in preview modal.
+    if (fileViewerPluginFor(name)) {
+      const r = resources.find((x) => x.name === name) || null;
+      const rel = (currentPath === "/" ? "" : currentPath.replace(/^\/+/, "") + "/") + name;
+      setViewerFile({
+        id: r?.id ?? "",
+        name,
+        path: rel,
+        mimeType: r?.contentType ?? "",
+        size: r?.contentLength ?? 0,
+        version: r?.lastModified ?? null,
+      });
+      addRecentFile(name, findResourceId(name));
+      return;
+    }
     setPreviewFile(name);
     addRecentFile(name, findResourceId(name));
-  }, [addRecentFile, findResourceId]);
+  }, [addRecentFile, findResourceId, resources, currentPath]);
 
   const handleShowDetails = useCallback((name: string) => {
     setDetailName(name);
@@ -590,6 +611,11 @@ export default function FilesPage() {
           onDownload={() => handleDownload(previewFile)}
           getFileContent={() => getFileContent(previewFile)}
         />
+      )}
+
+      {/* Plugin full-view file viewer (OnlyOffice). Core-owned, same-origin. */}
+      {viewerFile && (
+        <OnlyOfficeViewer file={viewerFile} onClose={() => setViewerFile(null)} />
       )}
 
       {/* Legacy file migration progress (issue #379) */}

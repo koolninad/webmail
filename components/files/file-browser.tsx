@@ -26,6 +26,7 @@ import { ResizeHandle } from "@/components/layout/resize-handle";
 import { Avatar } from "@/components/ui/avatar";
 import { getDroppedFilesAndFolders } from "@/lib/webdav/drop-utils";
 import type { FileResource } from "@/stores/file-store";
+import { hasFileViewerFor } from "@/lib/plugin-sandbox/file-viewers";
 import { ShareCollectionDialog } from "@/components/settings/share-collection-dialog";
 import type { IJMAPClient } from "@/lib/jmap/client-interface";
 import type { FileNodeRights } from "@/lib/jmap/types";
@@ -206,7 +207,9 @@ function isDatabaseFile(name: string): boolean {
 }
 
 function isPreviewable(name: string): boolean {
-  return isImageFile(name) || isTextFile(name) || isPdfFile(name) || isAudioFile(name) || isVideoFile(name);
+  // A plugin-claimed file (e.g. OnlyOffice docx) is "previewable": opening it
+  // routes through onPreviewFile, which the Files page hands to the plugin viewer.
+  return isImageFile(name) || isTextFile(name) || isPdfFile(name) || isAudioFile(name) || isVideoFile(name) || hasFileViewerFor(name);
 }
 
 function getFileIconByName(name: string, size: "sm" | "lg") {
@@ -685,7 +688,9 @@ export function FileBrowser({
         : `${currentPath}/${resource.name}`;
       onNavigate(newPath, resource.id);
     } else if (isPreviewable(resource.name)) {
-      if (isImageFile(resource.name)) {
+      // Images use the lightweight image preview; everything else (incl. plugin
+      // viewers) goes through onPreviewFile.
+      if (isImageFile(resource.name) && !hasFileViewerFor(resource.name)) {
         onPreviewImage(resource.name);
       } else {
         onPreviewFile(resource.name);
@@ -1683,7 +1688,7 @@ export function FileBrowser({
               <button
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
                 onClick={() => {
-                  if (isImageFile(contextMenu.name)) {
+                  if (isImageFile(contextMenu.name) && !hasFileViewerFor(contextMenu.name)) {
                     onPreviewImage(contextMenu.name);
                   } else {
                     onPreviewFile(contextMenu.name);

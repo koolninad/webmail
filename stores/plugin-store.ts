@@ -92,6 +92,9 @@ export const usePluginStore = create<PluginStoreState>()(
           ...(manifest.apiPostPaths && manifest.apiPostPaths.length > 0
             ? { apiPostPaths: manifest.apiPostPaths }
             : {}),
+          ...(manifest.fileViewerExtensions && manifest.fileViewerExtensions.length > 0
+            ? { fileViewerExtensions: manifest.fileViewerExtensions.map((e) => e.toLowerCase()) }
+            : {}),
         };
 
         // Save code to IndexedDB
