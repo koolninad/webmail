@@ -339,6 +339,8 @@ interface ServerPluginInfo {
   httpOrigins?: string[];
   /** Allowlist of same-origin /api/* paths this plugin may target via api.http.post(). */
   apiPostPaths?: string[];
+  /** File extensions this plugin claims as a full-view file viewer (e.g. OnlyOffice). */
+  fileViewerExtensions?: string[];
   /** Per-user settings schema, captured from the manifest server-side. */
   settingsSchema?: InstalledPlugin['settingsSchema'];
   /** Plugin-declared i18n tables (locale -> key -> string), from the manifest. */
@@ -365,6 +367,7 @@ function serverMeta(sp: ServerPluginInfo) {
     bundleHash: sp.bundleHash,
     httpOrigins: sp.httpOrigins,
     apiPostPaths: sp.apiPostPaths,
+    fileViewerExtensions: sp.fileViewerExtensions,
     settingsSchema: sp.settingsSchema,
     locales: sp.locales,
   };

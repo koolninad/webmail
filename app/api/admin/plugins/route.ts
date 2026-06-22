@@ -174,6 +174,16 @@ export async function POST(request: NextRequest) {
     const declaredFrameOrigins = sanitizeFrameOrigins(manifest.frameOrigins);
     const declaredHttpOrigins = sanitizeHttpOrigins(manifest.httpOrigins);
     const declaredApiPostPaths = sanitizeApiPostPaths(manifest.apiPostPaths);
+    // File-viewer extension claims (e.g. OnlyOffice). Lowercase, strip the dot,
+    // keep only plain alphanumeric extension tokens, dedupe.
+    const declaredFileViewerExtensions = Array.isArray(manifest.fileViewerExtensions)
+      ? [...new Set(
+          (manifest.fileViewerExtensions as unknown[])
+            .filter((e): e is string => typeof e === 'string')
+            .map((e) => e.trim().toLowerCase().replace(/^\./, ''))
+            .filter((e) => /^[a-z0-9]+$/.test(e)),
+        )]
+      : [];
 
     const now = new Date().toISOString();
     const plugin: ServerPlugin = {
@@ -203,6 +213,9 @@ export async function POST(request: NextRequest) {
         : {}),
       ...(declaredApiPostPaths.length > 0
         ? { apiPostPaths: declaredApiPostPaths }
+        : {}),
+      ...(declaredFileViewerExtensions.length > 0
+        ? { fileViewerExtensions: declaredFileViewerExtensions }
         : {}),
       installedAt: now,
       updatedAt: now,

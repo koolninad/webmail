@@ -54,6 +54,9 @@ export async function GET() {
       httpOrigins: p.httpOrigins,
       // Surface so clients can enforce api.http.post path allowlists.
       apiPostPaths: p.apiPostPaths,
+      // Surface so the Files page can route a claimed file (docx/xlsx/...) to
+      // the core file-viewer (OnlyOffice) instead of downloading it.
+      fileViewerExtensions: p.fileViewerExtensions,
       // Per-user settings schema, captured from the manifest at upload/load
       // time so the client can render the settings UI without re-parsing.
       settingsSchema: p.settingsSchema,

@@ -86,6 +86,13 @@ export interface ServerPlugin {
    * `InstalledPlugin.apiPostPaths` in `lib/plugin-types.ts`.
    */
   apiPostPaths?: string[];
+  /**
+   * Lowercased file extensions this plugin claims as a full-view file viewer
+   * (e.g. OnlyOffice: docx/xlsx/pptx). Surfaced to clients via /api/plugins so
+   * the Files page can route a claimed file to the core viewer. See
+   * `InstalledPlugin.fileViewerExtensions` in `lib/plugin-types.ts`.
+   */
+  fileViewerExtensions?: string[];
 }
 
 export interface ServerTheme {
