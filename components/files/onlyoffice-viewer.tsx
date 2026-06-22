@@ -83,7 +83,18 @@ export function OnlyOfficeViewer({ file, onClose }: OnlyOfficeViewerProps) {
       try {
         const config = await fetchSignedConfig(file);
         (config as { events?: unknown }).events = {
-          onError: (e: { data?: string }) => { if (!cancelled) setError(e?.data || "editor error"); },
+          // OnlyOffice's onError event.data may be a string OR an object
+          // ({errorCode, errorDescription}). Coerce to a string — rendering the
+          // raw object as a React child throws (React #31) and crashes the page.
+          onError: (e: { data?: unknown }) => {
+            if (cancelled) return;
+            const d = e?.data;
+            setError(
+              typeof d === "string" ? d
+              : d && typeof d === "object" ? JSON.stringify(d)
+              : "editor error",
+            );
+          },
           onRequestClose: () => onClose(),
         };
         const DocsAPI = await loadDocsApi();
