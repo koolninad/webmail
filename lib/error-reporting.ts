@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { debug } from "./debug";
 
 interface ErrorReport {
@@ -36,8 +37,15 @@ export function reportError(
     timestamp: report.timestamp.toISOString(),
   });
 
-  // Future: Send to error tracking service (Sentry, etc.)
-  // if (process.env.NODE_ENV === 'production') {
-  //   sendToErrorService(report);
-  // }
+  // Forward to Sentry (self-hosted). No-op when Sentry.init was disabled
+  // (non-production / no DSN).
+  Sentry.captureException(error, {
+    tags: { zone },
+    contexts: {
+      react: errorInfo?.componentStack
+        ? { componentStack: errorInfo.componentStack }
+        : undefined,
+      report: { url: report.url, userAgent: report.userAgent },
+    },
+  });
 }

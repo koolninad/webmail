@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
+import { withSentryConfig } from "@sentry/nextjs";
 import { execSync } from "child_process";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -63,4 +64,18 @@ const nextConfig: NextConfig = {
 };
 
 const withNextIntl = createNextIntlPlugin();
-export default withNextIntl(nextConfig);
+
+// Self-hosted Sentry (https://sentry.nubo.email). Source-map upload runs only
+// when SENTRY_AUTH_TOKEN is set, so token-less/dev builds are unaffected.
+export default withSentryConfig(withNextIntl(nextConfig), {
+  org: process.env.SENTRY_ORG || "sentry",
+  project: process.env.SENTRY_PROJECT || "nubo-jmap",
+  sentryUrl: process.env.SENTRY_URL || "https://sentry.nubo.email",
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: !process.env.CI,
+  widenClientFileUpload: true,
+  disableLogger: true,
+  // Source maps are uploaded then hidden from the client bundle.
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+});
+
