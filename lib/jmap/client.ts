@@ -459,8 +459,11 @@ function sanitizeIdentityDisplayName(name: string | undefined | null): string {
 }
 
 function normalizeEnvelopeRecipients(recipients?: Array<string | EmailAddress>): Array<{ email: string }> {
+  // The JMAP envelope rcptTo/mailFrom take a bare addr-spec, not an RFC 5322
+  // mailbox. `to`/`cc`/`bcc` may arrive as "Name <addr>"; strip the display
+  // name or the submission validator rejects the whole envelope (#…).
   return (recipients || [])
-    .map((recipient) => typeof recipient === 'string' ? recipient : recipient.email)
+    .map((recipient) => typeof recipient === 'string' ? parseRecipientString(recipient).email : recipient.email)
     .map((email) => email.trim())
     .filter(Boolean)
     .map((email) => ({ email }));
@@ -1273,19 +1276,19 @@ export class JMAPClient implements IJMAPClient {
     ]);
   }
 
-  async batchMarkAsRead(emailIds: string[], read: boolean = true): Promise<void> {
+  async batchMarkAsRead(emailIds: string[], read: boolean = true, accountId?: string): Promise<void> {
     if (emailIds.length === 0) return;
 
     const updates = Object.fromEntries(emailIds.map(id => [id, { "keywords/$seen": read }]));
     await this.request([
-      ["Email/set", { accountId: this.accountId, update: updates }, "0"],
+      ["Email/set", { accountId: accountId || this.accountId, update: updates }, "0"],
     ]);
   }
 
-  async toggleStar(emailId: string, starred: boolean): Promise<void> {
+  async toggleStar(emailId: string, starred: boolean, accountId?: string): Promise<void> {
     await this.request([
       ["Email/set", {
-        accountId: this.accountId,
+        accountId: accountId || this.accountId,
         update: {
           [emailId]: {
             "keywords/$flagged": starred,
@@ -1391,12 +1394,12 @@ export class JMAPClient implements IJMAPClient {
     ]);
   }
 
-  async batchDeleteEmails(emailIds: string[]): Promise<void> {
+  async batchDeleteEmails(emailIds: string[], accountId?: string): Promise<void> {
     if (emailIds.length === 0) return;
 
     await this.request([
       ["Email/set", {
-        accountId: this.accountId,
+        accountId: accountId || this.accountId,
         destroy: emailIds,
       }, "0"],
     ]);
@@ -1709,7 +1712,7 @@ export class JMAPClient implements IJMAPClient {
     ]);
   }
 
-  async createMailbox(name: string, parentId?: string): Promise<Mailbox> {
+  async createMailbox(name: string, parentId?: string, accountId?: string): Promise<Mailbox> {
     const createId = `new-${Date.now()}`;
     const createData: Record<string, unknown> = { name };
     if (parentId) {
@@ -1718,7 +1721,7 @@ export class JMAPClient implements IJMAPClient {
 
     const response = await this.request([
       ["Mailbox/set", {
-        accountId: this.accountId,
+        accountId: accountId || this.accountId,
         create: { [createId]: createData },
       }, "0"],
     ]);
@@ -2388,13 +2391,10 @@ export class JMAPClient implements IJMAPClient {
     const buildSubmissionCreate = (submissionId: string): Record<string, unknown> => {
       const create: Record<string, unknown> = { emailId: `#${emailId}`, identityId: finalIdentityId };
       if (holdForSeconds || envelopeMailFrom) {
-        const envelopeRecipients = [...to, ...(cc || []), ...(bcc || [])]
-          .map((email) => email.trim())
-          .filter(Boolean)
-          .map((email) => ({ email }));
+        const envelopeRecipients = normalizeEnvelopeRecipients([...to, ...(cc || []), ...(bcc || [])]);
         create.envelope = {
           mailFrom: {
-            email: envelopeMailFrom || fromEmail || this.username,
+            email: parseRecipientString(envelopeMailFrom || fromEmail || this.username).email,
             ...(holdForSeconds ? { parameters: { HOLDFOR: String(holdForSeconds) } } : {}),
           },
           rcptTo: envelopeRecipients,
@@ -4738,8 +4738,14 @@ export class JMAPClient implements IJMAPClient {
 
     debug.log('calendar', 'CalendarEvent/batchCreate', { count: events.length, accountId });
 
+    // Never emit iMIP scheduling messages when importing. Imported events often
+    // carry an organizer/participants where the current user is the organizer;
+    // without this, Stalwart tries to send invitation emails to every attendee
+    // synchronously during CalendarEvent/set, which is both wrong (importing a
+    // calendar should not spam invites) and can block the request indefinitely,
+    // leaving the import spinner spinning forever (#411).
     const response = await this.request([
-      ["CalendarEvent/set", { accountId, create: createMap }, "0"]
+      ["CalendarEvent/set", { accountId, sendSchedulingMessages: false, create: createMap }, "0"]
     ], this.calendarUsing());
 
     const createdIds: string[] = [];
