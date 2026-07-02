@@ -124,7 +124,7 @@ function OAuthCallbackInner() {
         mobileState = sessionStorage.getItem("mobile_state");
       } catch { /* sessionStorage may be unavailable */ }
 
-      if (mobileRedirectUri && mobileRedirectUri.startsWith("bulwarkmobile://")) {
+      if (mobileRedirectUri && mobileRedirectUri.startsWith("nuboemail://")) {
         // Drive /api/auth/sso/complete directly so we can read the tokens
         // out of the response - loginWithServerSso would consume them and
         // wire up the webmail auth store, which isn't useful here. The

@@ -722,7 +722,7 @@ function LinkDeviceSection() {
       // mount prefix — not the JMAP server URL. The JMAP server_url comes back
       // in the redeem response.
       const webmailBase = `${window.location.origin}${getPathPrefix()}`;
-      const payload = `bulwarkmail://pair?server=${encodeURIComponent(webmailBase)}&code=${encodeURIComponent(code)}`;
+      const payload = `nuboemail://pair?server=${encodeURIComponent(webmailBase)}&code=${encodeURIComponent(code)}`;
       const dataUrl = await QRCode.toDataURL(payload, { width: 240, margin: 1 });
       setQrDataUrl(dataUrl);
       setRemaining(expiresIn);

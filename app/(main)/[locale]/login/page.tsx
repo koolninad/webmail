@@ -111,7 +111,7 @@ function VersionBadge() {
 // Only redirect targets matching this scheme are honored by the mobile
 // handoff path. Without the check the login page becomes an open redirector
 // that funnels password and token material to any caller-supplied URL.
-const MOBILE_REDIRECT_SCHEME = "bulwarkmobile://";
+const MOBILE_REDIRECT_SCHEME = "nuboemail://";
 
 export default function LoginPage() {
   const router = useRouter();

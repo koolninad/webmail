@@ -17,7 +17,7 @@ const SSO_PENDING_MAX_AGE = 300; // 5 minutes
 // this prefix may flow through the mobile handoff path; without the guard
 // the SSO complete route would be coerced into returning tokens to whatever
 // caller-controlled URL the attacker chose.
-const MOBILE_REDIRECT_SCHEME = 'bulwarkmobile://';
+const MOBILE_REDIRECT_SCHEME = 'nuboemail://';
 
 export async function POST(request: NextRequest) {
   try {
