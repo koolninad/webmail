@@ -155,7 +155,12 @@ export default function LoginPage() {
   const effectiveOauthIssuerUrl = selectedServer?.oauth?.issuerUrl || globalOauthIssuerUrl;
   const [totpCode, setTotpCode] = useState("");
   const [showTotpField, setShowTotpField] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
+  // Default ON so a full page reload (browser reload button, hard refresh, or
+  // reopening the tab) restores the session instead of bouncing to login. The
+  // credential cookie is httpOnly + encrypted; users can still opt out by
+  // unchecking "Remember me". Without this, basic-auth accounts are evicted on
+  // every reload (see auth-store checkAuth), which reads as an unexpected logout.
+  const [rememberMe, setRememberMe] = useState(true);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [shakeError, setShakeError] = useState(false);
@@ -627,7 +632,10 @@ export default function LoginPage() {
       formData.username,
       formData.password,
       totpCode || undefined,
-      rememberMe
+      // Only persist credentials when the server actually supports it
+      // (a SESSION_SECRET is configured). Prevents a broken cookie write
+      // when the remember-me feature is disabled server-side.
+      rememberMeEnabled && rememberMe
     );
 
     if (success) {
