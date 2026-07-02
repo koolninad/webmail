@@ -184,8 +184,9 @@ function SidebarRowCounts({
   isSelected: boolean;
   onUnreadClick?: () => void;
 }) {
+  const showFolderTotalCount = useSettingsStore(s => s.showFolderTotalCount);
   const unreadCount = unread ?? 0;
-  const totalCount = total ?? 0;
+  const totalCount = showFolderTotalCount ? (total ?? 0) : 0;
 
   if (unreadCount === 0 && totalCount === 0) return null;
 
@@ -219,7 +220,7 @@ function SidebarRowCounts({
   ) : null;
 
   return (
-    <span className="ml-2 flex-shrink-0 flex items-baseline gap-1" title={`${unreadCount} unread / ${totalCount} total`}>
+    <span className="ml-2 flex-shrink-0 flex items-baseline gap-1" title={totalCount > 0 ? `${unreadCount} unread / ${totalCount} total` : `${unreadCount} unread`}>
       {unreadNode}
       {unreadCount > 0 && totalCount > 0 && (
         <span className="text-xs text-muted-foreground/60">/</span>
@@ -810,8 +811,14 @@ export function Sidebar({
     });
   };
 
+  // When the app renders its own virtual "Scheduled" folder (for delayed
+  // sends, driven by EmailSubmission), hide the server-provided scheduled
+  // mailbox (e.g. Stalwart's auto-created Scheduled folder, role === 'scheduled')
+  // so it does not appear twice. (#495)
+  const isServerScheduledNode = (n: MailboxNode) => showScheduledMailbox && n.role === 'scheduled';
+
   const mailboxTree = buildMailboxTree(mailboxes);
-  const ownTree = mailboxTree.filter(n => !n.id.startsWith('shared-account-'));
+  const ownTree = mailboxTree.filter(n => !n.id.startsWith('shared-account-') && !isServerScheduledNode(n));
   const sharedAccounts = mailboxTree.filter(n => n.id.startsWith('shared-account-'));
 
   // Multi-account mode (Pro shell): render every connected account as its
@@ -826,7 +833,7 @@ export function Sidebar({
           ? mailboxes
           : (accountMailboxes?.[account.id] ?? []);
         const tree = buildMailboxTree(accountMailboxList).filter(
-          (n) => !n.id.startsWith('shared-account-')
+          (n) => !n.id.startsWith('shared-account-') && !(isActive && isServerScheduledNode(n))
         );
         return { account, isActive, tree };
       })
