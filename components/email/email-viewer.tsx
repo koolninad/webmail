@@ -333,7 +333,7 @@ function renderClickableRecipients(
 
     return (
       <span key={r.email + index} className="inline-flex items-center">
-        {index > 0 && <span className="text-muted-foreground mr-1">,</span>}
+        {index > 0 && <span className="text-muted-foreground me-1">,</span>}
         <RecipientPopover
           name={r.name}
           email={r.email}
@@ -382,7 +382,7 @@ export function ContactSidebarPanel({
   };
 
   return (
-    <div className="w-[320px] shrink-0 border-l border-border bg-background flex flex-col h-full animate-in slide-in-from-right-5 duration-200">
+    <div className="w-[320px] shrink-0 border-s border-border bg-background flex flex-col h-full animate-in slide-in-from-right-5 duration-200">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <h3 className="text-sm font-semibold text-foreground truncate">{t('contact_sidebar.title')}</h3>
@@ -607,7 +607,7 @@ function SidebarSection({ icon: Icon, title, children }: { icon: React.Component
         <Icon className="w-3.5 h-3.5 text-muted-foreground" />
         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</h4>
       </div>
-      <div className="space-y-1 pl-5.5">{children}</div>
+      <div className="space-y-1 ps-5.5">{children}</div>
     </div>
   );
 }
@@ -693,6 +693,9 @@ export function EmailViewer({
 
   // Detect if current mailbox is Junk folder
   const isInJunkFolder = currentMailboxRole === 'junk';
+  // Marking your own outgoing mail as spam makes no sense - hide the action
+  // in Sent, Drafts and Scheduled.
+  const spamApplicable = !['sent', 'drafts', 'scheduled'].includes(currentMailboxRole || '');
 
   // Detect if the email is a draft
   const isDraft = email?.keywords?.['$draft'] === true;
@@ -711,6 +714,28 @@ export function EmailViewer({
   const { tabletListVisible } = useUIStore();
   const { identities, client, isDemoMode, activeAccountId } = useAuthStore();
   const activeAccount = useAccountStore((s) => s.accounts.find((a) => a.id === activeAccountId));
+
+  // List-Unsubscribe mailto: send the message ourselves - this is a webmail
+  // client, handing a mailto: URL to the OS mail handler goes nowhere for
+  // most users. Route to the email's own account in unified views and prefer
+  // the identity that received the newsletter, so the list can match the
+  // subscriber; sendEmail resolves the identity (with its own fallback to
+  // the account default) from the address we pass.
+  const handleSendMailtoUnsubscribe = async (fields: { to: string[]; subject?: string; body?: string }) => {
+    const sendClient = (email?.sourceClientAccountId
+      ? useAuthStore.getState().getClientForAccount(email.sourceClientAccountId)
+      : undefined) ?? client;
+    if (!sendClient) throw new Error('Not connected');
+
+    const recipientAddresses = [...(email?.to ?? []), ...(email?.cc ?? [])].map(r => r.email?.toLowerCase());
+    // In unified views the owning account's identities are not loaded here -
+    // pass nothing and let its client fall back to its default identity.
+    const fromIdentity = email?.sourceClientAccountId
+      ? undefined
+      : identities.find(i => i.email && recipientAddresses.includes(i.email.toLowerCase()));
+
+    await sendClient.sendEmail(fields.to, fields.subject ?? '', fields.body ?? '', undefined, undefined, fromIdentity?.id, fromIdentity?.email, undefined, fromIdentity?.name);
+  };
   const promptForRescheduleDelayedUntil = useCallback((): string | null => {
     const value = window.prompt(t('reschedule_prompt'));
     if (!value) return null;
@@ -752,6 +777,19 @@ export function EmailViewer({
   const [quickReplyText, setQuickReplyText] = useState("");
   const [isQuickReplyFocused, setIsQuickReplyFocused] = useState(false);
   const [isSendingQuickReply, setIsSendingQuickReply] = useState(false);
+  const handleSendQuickReply = async () => {
+    if (!quickReplyText.trim() || !onQuickReply || isSendingQuickReply) return;
+    setIsSendingQuickReply(true);
+    try {
+      await onQuickReply(quickReplyText);
+      setQuickReplyText("");
+      setIsQuickReplyFocused(false);
+    } catch (error) {
+      console.error("Failed to send quick reply:", error);
+    } finally {
+      setIsSendingQuickReply(false);
+    }
+  };
   const [showSourceModal, setShowSourceModal] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [moreMenuSub, setMoreMenuSub] = useState<'move' | 'tag' | null>(null);
@@ -2101,6 +2139,12 @@ export function EmailViewer({
      fit - the latter wraps header text to one character per line, which reads
      as 90deg-rotated vertical headers (issue #409). */
   html { overflow: hidden; height: auto !important; }
+  /* Some emails put height:100% on a full-bleed wrapper table/div (not html/body),
+     which - with body's overflow:hidden - clips the content to a sliver, and the
+     scrollHeight-based auto-resize then locks the iframe short (a Box.co.il
+     verification email rendered as a logo-only 150px strip). Neutralise the
+     full-height trick on any element so the body grows to its content. */
+  [style*="height:100%"], [style*="height: 100%"] { height: auto !important; }
   body { margin: 0; padding: ${bodyPadding}; overflow-x: auto; overflow-y: hidden; height: auto !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; line-height: 1.6; color: #1a1a1a; background: #ffffff; word-wrap: break-word; overflow-wrap: break-word; }
   @media (max-width: 640px) { body { padding-left: ${mobileBodyPaddingX}; padding-right: ${mobileBodyPaddingX}; } }
   img { max-width: 100% !important; height: auto !important; }
@@ -2148,16 +2192,51 @@ export function EmailViewer({
       const doc = iframe.contentDocument;
       if (doc?.body) {
         // Auto-resize iframe to fit content
-        const resizeObserver = new ResizeObserver(() => {
-          const height = doc.documentElement.scrollHeight;
+        // Measure max(documentElement, body): a height:100% wrapper can leave
+        // documentElement.scrollHeight short while the real content lives in body.
+        const applyHeight = () => {
+          if (iframe.contentDocument !== doc) return; // navigated away; stale
+          const height = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
           iframe.style.height = height + 'px';
           lastBodyHeightRef.current = height;
-        });
+        };
+        const resizeObserver = new ResizeObserver(applyHeight);
         resizeObserver.observe(doc.body);
-        const initialHeight = doc.documentElement.scrollHeight;
-        iframe.style.height = initialHeight + 'px';
-        lastBodyHeightRef.current = initialHeight;
+        applyHeight();
+        // The ResizeObserver only fires on body's border box; a content overflow
+        // that grows scrollHeight without resizing that box (e.g. a height:100%
+        // wrapper, or images that reflow the layout after onload) is otherwise
+        // missed and the iframe stays short. Re-measure on a fixed cadence over a
+        // short settle window, then stop — a self-clearing catch-all that does
+        // not depend on image load/error events firing (blocked images may fire
+        // neither). Cheap: ~12 scrollHeight reads, no early-stop heuristic to
+        // mis-trigger on a brief-stable-then-grow reflow.
+        const poll = window.setInterval(() => {
+          if (iframe.contentDocument !== doc) { window.clearInterval(poll); return; }
+          applyHeight();
+        }, 200);
+        window.setTimeout(() => window.clearInterval(poll), 2400);
         setIframeReady(true);
+
+        // Hide images that fail to load (dead/mixed-content/unreachable external
+        // URLs) rather than leaving the browser's broken-image placeholder and
+        // alt text, which read as stray label text in an otherwise image-only
+        // email (e.g. a blocked "logo" alt). Blocked images already carry a 1x1
+        // transparent pixel (naturalWidth 1) and display:none, so they're skipped.
+        const hideIfBroken = (img: HTMLImageElement) => {
+          if (img.complete && img.naturalWidth === 0 && img.getAttribute('src')) {
+            img.style.display = 'none';
+          }
+        };
+        doc.querySelectorAll('img').forEach((el) => {
+          const img = el as HTMLImageElement;
+          if (img.complete) {
+            hideIfBroken(img);
+          } else {
+            img.addEventListener('error', () => { img.style.display = 'none'; }, { once: true });
+            img.addEventListener('load', () => hideIfBroken(img), { once: true });
+          }
+        });
 
         // Make links open in new tab
         doc.querySelectorAll('a').forEach(a => {
@@ -2580,7 +2659,7 @@ export function EmailViewer({
             <h3 className="text-xl font-semibold text-foreground mb-3">{tDemoWelcome('title')}</h3>
             <p className="text-sm text-muted-foreground mb-6 leading-relaxed">{tDemoWelcome('description')}</p>
             <div className="flex flex-col gap-3 items-center">
-              <div className="grid grid-cols-2 gap-3 text-left text-sm text-muted-foreground w-full">
+              <div className="grid grid-cols-2 gap-3 text-start text-sm text-muted-foreground w-full">
                 <div className="flex items-center gap-2">
                   <Mail className="w-4 h-4 text-primary shrink-0" />
                   <span>{tDemoWelcome('feature_email')}</span>
@@ -2622,7 +2701,7 @@ export function EmailViewer({
             <p className="text-muted-foreground">{t('no_conversation_description')}</p>
             {onCompose && (
               <Button onClick={onCompose} className="mt-6" title={t('compose_hint')}>
-                <PenSquare className="w-4 h-4 mr-2" />
+                <PenSquare className="w-4 h-4 me-2" />
                 {t('compose')}
               </Button>
             )}
@@ -2647,7 +2726,7 @@ export function EmailViewer({
             variant="ghost"
             size="icon"
             onClick={onBack}
-            className="h-9 w-9 flex-shrink-0 -ml-1"
+            className="h-9 w-9 flex-shrink-0 -ms-1"
             aria-label={t('back_to_list')}
           >
             <ChevronLeft className="w-5 h-5" />
@@ -2782,7 +2861,7 @@ export function EmailViewer({
               {showToolbarLabels && <span className="text-[10px] leading-tight sm:text-sm">{t('move')}</span>}
             </Button>
             {moveMenuOpen && (
-              <div className="absolute right-0 top-full mt-1 py-1 w-48 max-h-72 overflow-y-auto bg-background rounded-lg shadow-lg border border-border z-10">
+              <div className="absolute end-0 top-full mt-1 py-1 w-48 max-h-72 overflow-y-auto bg-background rounded-lg shadow-lg border border-border z-10">
                 {(() => {
                   const renderNodes = (nodes: MailboxNode[], depth = 0) => {
                     return nodes.map((node) => {
@@ -2793,7 +2872,7 @@ export function EmailViewer({
                           {isTarget ? (
                             <button
                               onClick={() => { onMoveToMailbox(node.id); setMoveMenuOpen(false); }}
-                              className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted flex items-center gap-2"
+                              className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted flex items-center gap-2"
                               style={{ paddingLeft: `${0.75 + depth * 1}rem` }}
                             >
                               <Icon className="w-4 h-4 flex-shrink-0" />
@@ -2853,7 +2932,7 @@ export function EmailViewer({
             )}
           </button>
           {tagMenuOpen && (
-            <div className="absolute right-0 top-full mt-1 py-1 w-40 bg-background rounded-lg shadow-lg border border-border z-10">
+            <div className="absolute end-0 top-full mt-1 py-1 w-40 bg-background rounded-lg shadow-lg border border-border z-10">
               {colorOptions.map((option) => {
                 const isActive = currentColors.includes(option.value);
                 return (
@@ -2861,13 +2940,13 @@ export function EmailViewer({
                     key={option.value}
                     onClick={() => { if (email) onSetColorTag?.(email.id, option.value); setTagMenuOpen(false); }}
                     className={cn(
-                      "w-full px-3 py-1.5 text-sm text-left hover:bg-muted flex items-center gap-2",
+                      "w-full px-3 py-1.5 text-sm text-start hover:bg-muted flex items-center gap-2",
                       isActive && "bg-accent font-medium"
                     )}
                   >
                     <span className={cn("w-3 h-3 rounded-full flex-shrink-0", option.color)} />
                     <span className="truncate">{option.name}</span>
-                    {isActive && <Check className="w-3 h-3 ml-auto flex-shrink-0 text-foreground" />}
+                    {isActive && <Check className="w-3 h-3 ms-auto flex-shrink-0 text-foreground" />}
                   </button>
                 );
               })}
@@ -2876,7 +2955,7 @@ export function EmailViewer({
                   <div className="h-px bg-border my-1" />
                   <button
                     onClick={() => { if (email) onSetColorTag?.(email.id, null); setTagMenuOpen(false); }}
-                    className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted flex items-center gap-2 text-muted-foreground"
+                    className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted flex items-center gap-2 text-muted-foreground"
                   >
                     <X className="w-3 h-3 flex-shrink-0" />
                     <span>{t('remove_color')}</span>
@@ -2889,7 +2968,7 @@ export function EmailViewer({
         </div>
 
         {/* Spam */}
-        {(onMarkAsSpam || onUndoSpam) && (
+        {spamApplicable && (onMarkAsSpam || onUndoSpam) && (
           <Button
             variant="ghost"
             size="sm"
@@ -2980,11 +3059,11 @@ export function EmailViewer({
             <span className="text-[10px] leading-tight sm:hidden">{t('more_actions')}</span>
           </Button>
           {moreMenuOpen && !isMobile && (
-            <div className="absolute right-0 top-full mt-1 w-48 bg-background rounded-md shadow-lg border border-border z-10 py-1">
+            <div className="absolute end-0 top-full mt-1 w-48 bg-background rounded-md shadow-lg border border-border z-10 py-1">
               {/* Star toggle */}
               <button
                 onClick={() => { onToggleStar?.(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2"
+                className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2"
               >
                 <Star className={cn("w-4 h-4", isStarred && "fill-yellow-400 text-yellow-400")} />
                 {isStarred ? t('tooltips.unstar') : t('tooltips.star')}
@@ -2992,7 +3071,7 @@ export function EmailViewer({
               {/* Overflow: reply */}
               <button
                 onClick={() => { onReply?.(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(1) ? "" : "sm:hidden")}
+                className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(1) ? "" : "sm:hidden")}
               >
                 <Reply className="w-4 h-4" />
                 {t('reply')}
@@ -3000,7 +3079,7 @@ export function EmailViewer({
               {/* Overflow: reply all */}
               <button
                 onClick={() => { onReplyAll?.(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(2) ? "" : "sm:hidden")}
+                className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(2) ? "" : "sm:hidden")}
               >
                 <ReplyAll className="w-4 h-4" />
                 {t('reply_all')}
@@ -3008,7 +3087,7 @@ export function EmailViewer({
               {/* Overflow: forward */}
               <button
                 onClick={() => { onForward?.(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(3) ? "" : "sm:hidden")}
+                className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(3) ? "" : "sm:hidden")}
               >
                 <Forward className="w-4 h-4" />
                 {t('forward')}
@@ -3016,7 +3095,7 @@ export function EmailViewer({
               {/* Overflow: archive */}
               <button
                 onClick={() => { onArchive?.(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(4) ? "" : "sm:hidden")}
+                className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(4) ? "" : "sm:hidden")}
               >
                 <Archive className="w-4 h-4" />
                 {t('archive')}
@@ -3029,14 +3108,14 @@ export function EmailViewer({
                 >
                   <button
                     onClick={() => setMoreMenuSub(moreMenuSub === 'move' ? null : 'move')}
-                    className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2"
+                    className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2"
                   >
                     <FolderInput className="w-4 h-4" />
                     <span className="flex-1">{t('move_to')}</span>
                     <ChevronRight className="w-3 h-3 text-muted-foreground" />
                   </button>
                   {moreMenuSub === 'move' && (
-                    <div className="absolute right-full top-0 mr-1 py-1 w-48 max-h-72 overflow-y-auto bg-background rounded-md shadow-lg border border-border z-10">
+                    <div className="absolute end-full top-0 me-1 py-1 w-48 max-h-72 overflow-y-auto bg-background rounded-md shadow-lg border border-border z-10">
                       {(() => {
                         const renderMobileNodes = (nodes: MailboxNode[], depth = 0) => {
                           return nodes.map((node) => {
@@ -3047,7 +3126,7 @@ export function EmailViewer({
                                 {isTarget ? (
                                   <button
                                     onClick={() => { onMoveToMailbox(node.id); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                                    className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted flex items-center gap-2"
+                                    className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted flex items-center gap-2"
                                     style={{ paddingLeft: `${0.75 + depth * 1}rem` }}
                                   >
                                     <Icon className="w-4 h-4 flex-shrink-0" />
@@ -3081,14 +3160,14 @@ export function EmailViewer({
                 >
                   <button
                     onClick={() => setMoreMenuSub(moreMenuSub === 'tag' ? null : 'tag')}
-                    className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2"
+                    className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2"
                   >
                     <Tag className="w-4 h-4" />
                     <span className="flex-1">{t('tag')}</span>
                     <ChevronRight className="w-3 h-3 text-muted-foreground" />
                   </button>
                   {moreMenuSub === 'tag' && (
-                    <div className="absolute right-full top-0 mr-1 py-1 w-40 bg-background rounded-md shadow-lg border border-border z-10">
+                    <div className="absolute end-full top-0 me-1 py-1 w-40 bg-background rounded-md shadow-lg border border-border z-10">
                       {colorOptions.map((option) => {
                         const isActive = currentColors.includes(option.value);
                         return (
@@ -3096,13 +3175,13 @@ export function EmailViewer({
                             key={option.value}
                             onClick={() => { if (email) onSetColorTag?.(email.id, option.value); setMoreMenuOpen(false); setMoreMenuSub(null); }}
                             className={cn(
-                              "w-full px-3 py-1.5 text-sm text-left hover:bg-muted flex items-center gap-2",
+                              "w-full px-3 py-1.5 text-sm text-start hover:bg-muted flex items-center gap-2",
                               isActive && "bg-accent font-medium"
                             )}
                           >
                             <span className={cn("w-3 h-3 rounded-full flex-shrink-0", option.color)} />
                             <span className="truncate">{option.name}</span>
-                            {isActive && <Check className="w-3 h-3 ml-auto flex-shrink-0 text-foreground" />}
+                            {isActive && <Check className="w-3 h-3 ms-auto flex-shrink-0 text-foreground" />}
                           </button>
                         );
                       })}
@@ -3111,7 +3190,7 @@ export function EmailViewer({
                           <div className="h-px bg-border my-1" />
                           <button
                             onClick={() => { if (email) onSetColorTag?.(email.id, null); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                            className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted flex items-center gap-2 text-muted-foreground"
+                            className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted flex items-center gap-2 text-muted-foreground"
                           >
                             <X className="w-3 h-3 flex-shrink-0" />
                             <span>{t('remove_color')}</span>
@@ -3123,10 +3202,10 @@ export function EmailViewer({
                 </div>
               )}
               {/* Overflow: spam */}
-              {(onMarkAsSpam || onUndoSpam) && (
+              {spamApplicable && (onMarkAsSpam || onUndoSpam) && (
                 <button
                   onClick={() => { (isInJunkFolder ? onUndoSpam : onMarkAsSpam)?.(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                  className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(7) ? "" : "sm:hidden")}
+                  className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(7) ? "" : "sm:hidden")}
                 >
                   {isInJunkFolder ? (
                     <ShieldCheck className="h-4 w-4 text-green-600 dark:text-green-400" />
@@ -3139,7 +3218,7 @@ export function EmailViewer({
               {/* Overflow: toggle read */}
               <button
                 onClick={() => { onMarkAsRead?.(email.id, isUnread); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(8) ? "" : "sm:hidden")}
+                className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(8) ? "" : "sm:hidden")}
               >
                 {isUnread ? <MailOpen className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
                 {isUnread ? t('mark_read') : t('mark_unread')}
@@ -3147,7 +3226,7 @@ export function EmailViewer({
               {/* Overflow: print */}
               <button
                 onClick={() => { handlePrint(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(9) ? "" : "sm:hidden")}
+                className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(9) ? "" : "sm:hidden")}
               >
                 <Printer className="w-4 h-4" />
                 {t('print')}
@@ -3155,7 +3234,7 @@ export function EmailViewer({
               {/* Overflow: view source */}
               <button
                 onClick={() => { setShowSourceModal(true); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(10) ? "" : "sm:hidden")}
+                className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(10) ? "" : "sm:hidden")}
               >
                 <Code className="w-4 h-4" />
                 {t('view_source')}
@@ -3164,7 +3243,7 @@ export function EmailViewer({
               {effectiveEmailContent.isHtml && (
                 <button
                   onClick={() => { setEmailViewDarkOverride(prev => prev === null ? !(resolvedTheme === 'dark') : !prev); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                  className={cn("w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(11) ? "" : "sm:hidden")}
+                  className={cn("w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2", hiddenPriorities.has(11) ? "" : "sm:hidden")}
                 >
                   {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                   {isDark ? 'View in light mode' : 'View in dark mode'}
@@ -3174,7 +3253,7 @@ export function EmailViewer({
               {/* Export email */}
               <button
                 onClick={() => { handleExportEmail(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2"
+                className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2"
               >
                 <Download className="w-4 h-4" />
                 {t('export_email')}
@@ -3182,7 +3261,7 @@ export function EmailViewer({
               {/* Import email */}
               <button
                 onClick={() => { handleImportEmail(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2"
+                className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2"
               >
                 <Upload className="w-4 h-4" />
                 {t('import_email')}
@@ -3190,7 +3269,7 @@ export function EmailViewer({
               {onShowShortcuts && (
                 <button
                   onClick={() => { onShowShortcuts(); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                  className="w-full px-3 py-1.5 text-sm text-left hover:bg-muted text-foreground flex items-center gap-2"
+                  className="w-full px-3 py-1.5 text-sm text-start hover:bg-muted text-foreground flex items-center gap-2"
                 >
                   <Keyboard className="w-4 h-4" />
                   {t('keyboard_shortcuts')}
@@ -3218,7 +3297,7 @@ export function EmailViewer({
     )}
     {!isScheduled && isMobile && (
       <div className={cn(
-        "fixed inset-y-0 right-0 w-72 bg-background border-l border-border z-[70] sm:hidden",
+        "fixed inset-y-0 right-0 w-72 bg-background border-s border-border z-[70] sm:hidden",
         "transform transition-transform duration-300 ease-in-out",
         "flex flex-col",
         moreMenuOpen ? "translate-x-0" : "translate-x-full"
@@ -3227,7 +3306,7 @@ export function EmailViewer({
           {moreMenuSub ? (
             <button
               onClick={() => setMoreMenuSub(null)}
-              className="flex items-center gap-1 -ml-2 px-2 py-1 rounded hover:bg-muted text-sm font-semibold text-foreground"
+              className="flex items-center gap-1 -ms-2 px-2 py-1 rounded hover:bg-muted text-sm font-semibold text-foreground"
             >
               <ChevronLeft className="w-5 h-5" />
               {moreMenuSub === 'move' ? t('move_to') : t('tag')}
@@ -3245,7 +3324,7 @@ export function EmailViewer({
               {/* Star toggle */}
               <button
                 onClick={() => { onToggleStar?.(); setMoreMenuOpen(false); }}
-                className="w-full px-4 py-3 min-h-[44px] text-sm text-left hover:bg-muted text-foreground flex items-center gap-3"
+                className="w-full px-4 py-3 min-h-[44px] text-sm text-start hover:bg-muted text-foreground flex items-center gap-3"
               >
                 <Star className={cn("w-5 h-5", isStarred && "fill-yellow-400 text-yellow-400")} />
                 {isStarred ? t('tooltips.unstar') : t('tooltips.star')}
@@ -3254,12 +3333,12 @@ export function EmailViewer({
               {colorOptions.length > 0 && (
                 <button
                   onClick={() => setMoreMenuSub('tag')}
-                  className="w-full px-4 py-3 min-h-[44px] text-sm text-left hover:bg-muted text-foreground flex items-center gap-3"
+                  className="w-full px-4 py-3 min-h-[44px] text-sm text-start hover:bg-muted text-foreground flex items-center gap-3"
                 >
                   <Tag className="w-5 h-5" />
                   <span className="flex-1">{t('tag')}</span>
                   {currentColors.length > 0 && (
-                    <div className="flex -space-x-1 mr-1">
+                    <div className="flex -space-x-1 me-1">
                       {currentColors.slice(0, 3).map((c) => {
                         const opt = colorOptions.find((o) => o.value === c);
                         return opt ? <span key={c} className={cn("w-3 h-3 rounded-full border border-background", opt.color)} /> : null;
@@ -3271,14 +3350,14 @@ export function EmailViewer({
               )}
               <button
                 onClick={() => { handlePrint(); setMoreMenuOpen(false); }}
-                className="w-full px-4 py-3 min-h-[44px] text-sm text-left hover:bg-muted text-foreground flex items-center gap-3"
+                className="w-full px-4 py-3 min-h-[44px] text-sm text-start hover:bg-muted text-foreground flex items-center gap-3"
               >
                 <Printer className="w-5 h-5" />
                 {t('print')}
               </button>
               <button
                 onClick={() => { setShowSourceModal(true); setMoreMenuOpen(false); }}
-                className="w-full px-4 py-3 min-h-[44px] text-sm text-left hover:bg-muted text-foreground flex items-center gap-3"
+                className="w-full px-4 py-3 min-h-[44px] text-sm text-start hover:bg-muted text-foreground flex items-center gap-3"
               >
                 <Code className="w-5 h-5" />
                 {t('view_source')}
@@ -3286,7 +3365,7 @@ export function EmailViewer({
               {effectiveEmailContent.isHtml && (
                 <button
                   onClick={() => { setEmailViewDarkOverride(prev => prev === null ? !(resolvedTheme === 'dark') : !prev); setMoreMenuOpen(false); }}
-                  className="w-full px-4 py-3 min-h-[44px] text-sm text-left hover:bg-muted text-foreground flex items-center gap-3"
+                  className="w-full px-4 py-3 min-h-[44px] text-sm text-start hover:bg-muted text-foreground flex items-center gap-3"
                 >
                   {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                   {isDark ? 'View in light mode' : 'View in dark mode'}
@@ -3295,14 +3374,14 @@ export function EmailViewer({
               <div className="h-px bg-border my-1" />
               <button
                 onClick={() => { handleExportEmail(); setMoreMenuOpen(false); }}
-                className="w-full px-4 py-3 min-h-[44px] text-sm text-left hover:bg-muted text-foreground flex items-center gap-3"
+                className="w-full px-4 py-3 min-h-[44px] text-sm text-start hover:bg-muted text-foreground flex items-center gap-3"
               >
                 <Download className="w-5 h-5" />
                 {t('export_email')}
               </button>
               <button
                 onClick={() => { handleImportEmail(); setMoreMenuOpen(false); }}
-                className="w-full px-4 py-3 min-h-[44px] text-sm text-left hover:bg-muted text-foreground flex items-center gap-3"
+                className="w-full px-4 py-3 min-h-[44px] text-sm text-start hover:bg-muted text-foreground flex items-center gap-3"
               >
                 <Upload className="w-5 h-5" />
                 {t('import_email')}
@@ -3310,7 +3389,7 @@ export function EmailViewer({
               {onShowShortcuts && (
                 <button
                   onClick={() => { onShowShortcuts(); setMoreMenuOpen(false); }}
-                  className="w-full px-4 py-3 min-h-[44px] text-sm text-left hover:bg-muted text-foreground flex items-center gap-3"
+                  className="w-full px-4 py-3 min-h-[44px] text-sm text-start hover:bg-muted text-foreground flex items-center gap-3"
                 >
                   <Keyboard className="w-5 h-5" />
                   {t('keyboard_shortcuts')}
@@ -3328,7 +3407,7 @@ export function EmailViewer({
                     {isTarget ? (
                       <button
                         onClick={() => { onMoveToMailbox(node.id); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                        className="w-full px-4 py-2.5 min-h-[44px] text-sm text-left hover:bg-muted flex items-center gap-3"
+                        className="w-full px-4 py-2.5 min-h-[44px] text-sm text-start hover:bg-muted flex items-center gap-3"
                         style={{ paddingLeft: `${1 + depth * 1}rem` }}
                       >
                         <Icon className="w-5 h-5 flex-shrink-0" />
@@ -3359,20 +3438,20 @@ export function EmailViewer({
                     key={option.value}
                     onClick={() => { if (email) onSetColorTag?.(email.id, option.value); setMoreMenuOpen(false); setMoreMenuSub(null); }}
                     className={cn(
-                      "w-full px-4 py-2.5 min-h-[44px] text-sm text-left hover:bg-muted flex items-center gap-3",
+                      "w-full px-4 py-2.5 min-h-[44px] text-sm text-start hover:bg-muted flex items-center gap-3",
                       isActive && "bg-accent font-medium"
                     )}
                   >
                     <span className={cn("w-3.5 h-3.5 rounded-full flex-shrink-0", option.color)} />
                     <span className="truncate">{option.name}</span>
-                    {isActive && <Check className="w-4 h-4 ml-auto flex-shrink-0 text-foreground" />}
+                    {isActive && <Check className="w-4 h-4 ms-auto flex-shrink-0 text-foreground" />}
                   </button>
                 );
               })}
               {currentColors.length > 0 && (
                 <button
                   onClick={() => { if (email) onSetColorTag?.(email.id, null); setMoreMenuOpen(false); setMoreMenuSub(null); }}
-                  className="w-full px-4 py-2.5 min-h-[44px] text-sm text-left hover:bg-muted flex items-center gap-3 text-muted-foreground"
+                  className="w-full px-4 py-2.5 min-h-[44px] text-sm text-start hover:bg-muted flex items-center gap-3 text-muted-foreground"
                 >
                   <X className="w-4 h-4 flex-shrink-0" />
                   <span>{t('remove_color')}</span>
@@ -3412,7 +3491,7 @@ export function EmailViewer({
                 variant="ghost"
                 size="icon"
                 onClick={onBack}
-                className="h-11 w-11 lg:h-10 lg:w-10 flex-shrink-0 -ml-2"
+                className="h-11 w-11 lg:h-10 lg:w-10 flex-shrink-0 -ms-2"
                 aria-label={t('back_to_list')}
               >
                 <ChevronLeft className="w-5 h-5" />
@@ -3456,7 +3535,7 @@ export function EmailViewer({
               </div>
             </div>
             {/* Date/time on the right of subject row - hidden on mobile, shown next to sender */}
-            <div className="hidden sm:block flex-shrink-0 text-right">
+            <div className="hidden sm:block flex-shrink-0 text-end">
               <span className="text-xs lg:text-sm text-muted-foreground whitespace-nowrap">
                 {formatDateTime(email.receivedAt, timeFormat, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
               </span>
@@ -3512,7 +3591,7 @@ export function EmailViewer({
                         name={sender?.name}
                         email={sender.email}
                         onViewContact={handleViewContactSidebar}
-                        className="font-semibold text-left"
+                        className="font-semibold text-start"
                       />
                     ) : (
                       <span className="font-semibold text-foreground">{t('unknown_sender')}</span>
@@ -3522,6 +3601,7 @@ export function EmailViewer({
                       <UnsubscribeBanner
                         listUnsubscribe={listHeaders.listUnsubscribe}
                         senderEmail={email?.from?.[0]?.email || ''}
+                        onSendMailtoUnsubscribe={handleSendMailtoUnsubscribe}
                         onDismiss={() => {
                           const messageId = email?.messageId || '';
                           const newSet = new Set(dismissedUnsubBanners).add(messageId);
@@ -3576,7 +3656,7 @@ export function EmailViewer({
                 )}
                 <button
                   onClick={() => setShowFullHeaders(!showFullHeaders)}
-                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5 transition-colors ml-1"
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5 transition-colors ms-1"
                 >
                   {showFullHeaders ? (
                     <>
@@ -3699,7 +3779,7 @@ export function EmailViewer({
                               <span className="text-xs text-foreground truncate max-w-[180px]">
                                 {getAttachmentDisplayName(attachment.name, attachment.type)}
                               </span>
-                              <span className="text-[10px] text-muted-foreground ml-auto flex-shrink-0">
+                              <span className="text-[10px] text-muted-foreground ms-auto flex-shrink-0">
                                 {formatFileSize(attachment.size)}
                               </span>
                               <div className="absolute inset-y-0 right-0 rounded-r-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
@@ -3757,7 +3837,7 @@ export function EmailViewer({
                     name={sender?.name}
                     email={sender.email}
                     onViewContact={handleViewContactSidebar}
-                    className="text-sm font-semibold text-left"
+                    className="text-sm font-semibold text-start"
                   />
                 ) : (
                   <span className="text-sm font-semibold text-foreground">{t('unknown_sender')}</span>
@@ -3767,6 +3847,7 @@ export function EmailViewer({
                   <UnsubscribeBanner
                     listUnsubscribe={listHeaders.listUnsubscribe}
                     senderEmail={email?.from?.[0]?.email || ''}
+                    onSendMailtoUnsubscribe={handleSendMailtoUnsubscribe}
                     onDismiss={() => {
                       const messageId = email?.messageId || '';
                       const newSet = new Set(dismissedUnsubBanners).add(messageId);
@@ -3800,7 +3881,7 @@ export function EmailViewer({
                 )}
                 <button
                   onClick={() => setShowFullHeaders(!showFullHeaders)}
-                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5 transition-colors ml-1"
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5 transition-colors ms-1"
                 >
                   {showFullHeaders ? (
                     <>
@@ -3817,7 +3898,7 @@ export function EmailViewer({
               </div>
             </div>
             {/* Date/time + size on the right (mobile) */}
-            <div className="sm:hidden flex-shrink-0 text-right ml-2">
+            <div className="sm:hidden flex-shrink-0 text-end ms-2">
               <span className="text-xs text-muted-foreground whitespace-nowrap">
                 {formatDateTime(email.receivedAt, timeFormat, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
               </span>
@@ -3949,7 +4030,7 @@ export function EmailViewer({
                           email={sender?.email || ''}
                           displayLabel={sender?.name && sender?.email ? `${sender.name} <${sender.email}>` : undefined}
                           onViewContact={handleViewContactSidebar}
-                          className="text-sm text-left"
+                          className="text-sm text-start"
                         />
                       </div>
                     </Row>
@@ -4477,7 +4558,7 @@ export function EmailViewer({
                         <span className="text-sm text-foreground truncate max-w-[220px]">
                           {getAttachmentDisplayName(attachment.name, attachment.type)}
                         </span>
-                        <span className="text-xs text-muted-foreground ml-auto flex-shrink-0">
+                        <span className="text-xs text-muted-foreground ms-auto flex-shrink-0">
                           {formatFileSize(attachment.size)}
                         </span>
                         <div className="absolute inset-y-0 right-0 rounded-r-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
@@ -4615,7 +4696,7 @@ export function EmailViewer({
                           <span className="text-xs text-foreground truncate max-w-[180px]">
                             {getAttachmentDisplayName(attachment.name, attachment.type)}
                           </span>
-                          <span className="text-[10px] text-muted-foreground ml-auto flex-shrink-0">
+                          <span className="text-[10px] text-muted-foreground ms-auto flex-shrink-0">
                             {formatFileSize(attachment.size)}
                           </span>
                           <div className="absolute inset-y-0 right-0 rounded-r-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
@@ -4713,6 +4794,12 @@ export function EmailViewer({
                     value={quickReplyText}
                     onChange={(e) => setQuickReplyText(e.target.value)}
                     onFocus={() => setIsQuickReplyFocused(true)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                        e.preventDefault();
+                        void handleSendQuickReply();
+                      }
+                    }}
                     placeholder={t('quick_reply_placeholder')}
                     className={cn(
                       "w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-lg",
@@ -4752,35 +4839,22 @@ export function EmailViewer({
                           disabled={isSendingQuickReply}
                           className="text-muted-foreground"
                         >
-                          <MoreVertical className="w-4 h-4 mr-1" />
+                          <MoreVertical className="w-4 h-4 me-1" />
                           {t('more_options')}
                         </Button>
                         <Button
                           size="sm"
-                          onClick={async () => {
-                            if (!quickReplyText.trim() || !onQuickReply) return;
-
-                            setIsSendingQuickReply(true);
-                            try {
-                              await onQuickReply(quickReplyText);
-                              setQuickReplyText("");
-                              setIsQuickReplyFocused(false);
-                            } catch (error) {
-                              console.error("Failed to send quick reply:", error);
-                            } finally {
-                              setIsSendingQuickReply(false);
-                            }
-                          }}
+                          onClick={handleSendQuickReply}
                           disabled={!quickReplyText.trim() || isSendingQuickReply}
                         >
                           {isSendingQuickReply ? (
                             <>
-                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                              <Loader2 className="w-4 h-4 me-1 animate-spin" />
                               {t('sending')}
                             </>
                           ) : (
                             <>
-                              <Reply className="w-4 h-4 mr-1" />
+                              <Reply className="w-4 h-4 me-1" />
                               {t('send')}
                             </>
                           )}
@@ -4916,7 +4990,7 @@ export function EmailViewer({
       <>
         {/* Collapse toggle when sidebar is collapsed */}
         {detailSidebarCollapsed && (
-          <div className="flex flex-col items-center border-l border-border bg-background">
+          <div className="flex flex-col items-center border-s border-border bg-background">
             <Button
               variant="ghost"
               size="icon"
@@ -4940,7 +5014,7 @@ export function EmailViewer({
               onDoubleClick={() => setDetailSidebarWidth(280)}
             />
             <div
-              className="flex flex-col h-full border-l border-border bg-background overflow-hidden"
+              className="flex flex-col h-full border-s border-border bg-background overflow-hidden"
               style={{ width: detailSidebarWidth, minWidth: detailSidebarWidth }}
             >
               <div className="flex items-center justify-end px-1 py-1 border-b border-border shrink-0">

@@ -75,7 +75,7 @@ import { appLifecycleHooks, uiHooks, routerHooks, toastHooks, emailHooks } from 
 import { emailToReadView } from "@/lib/plugin-projection";
 import { buildQuoteHeader } from "@/lib/quote-header";
 import { buildReplySubject, buildForwardSubject } from "@/lib/subject-prefix";
-import { useLocaleStore } from "@/stores/locale-store";
+import { getEffectiveLocale } from '@/i18n/detect-locale';
 import type { QuoteHeader } from "@/lib/plugin-types";
 
 const SCHEDULED_MAILBOX_ID = '__scheduled__';
@@ -121,7 +121,7 @@ export default function Home() {
   useIdentitySync();
   const trustedSendersAddressBook = useSettingsStore((state) => state.trustedSendersAddressBook);
   const sendDelaySeconds = useSettingsStore((state) => state.sendDelaySeconds);
-  const { loadTrustedSendersBook, trustedSendersLoaded } = useContactStore();
+  const { loadTrustedSendersBook, trustedSendersLoaded, loadRecentRecipients } = useContactStore();
 
   const promptForRescheduleDelayedUntil = useCallback((): string | null => {
     const value = window.prompt(t('email_viewer.reschedule_prompt'));
@@ -341,6 +341,15 @@ export default function Home() {
     setViewingAccount,
     refreshCurrentMailbox,
   } = useEmailStore();
+
+  // Load recent recipients (from the Sent folder) for compose autocomplete.
+  // Runs once when the Sent mailbox is known; the store guards against reloads.
+  useEffect(() => {
+    const sent = mailboxes.find((m) => m.role === 'sent');
+    if (client && sent) {
+      loadRecentRecipients(client, sent.originalId || sent.id);
+    }
+  }, [client, mailboxes, loadRecentRecipients]);
 
   // Pro shell: populate per-account mailbox cache so the sidebar can render
   // every connected account Thunderbird-style.
@@ -612,6 +621,10 @@ export default function Home() {
     onToggleSpam: async () => {
       if (isScheduledView) return;
       const currentMailbox = mailboxes.find(m => m.id === selectedMailbox);
+      // Marking your own outgoing mail as spam makes no sense - the toolbar
+      // and menus hide the action in Sent/Drafts/Scheduled, so the shortcut
+      // is a no-op there too.
+      if (['sent', 'drafts', 'scheduled'].includes(currentMailbox?.role || '')) return;
       const isInJunk = currentMailbox?.role === 'junk';
       if (selectedEmailIds.size > 0 && client) {
         const ids = Array.from(selectedEmailIds);
@@ -1182,18 +1195,22 @@ export default function Home() {
         return;
       }
 
-      // Mark the original email with $answered or $forwarded keyword
-      if (originalEmailId && (effectiveMode === 'reply' || effectiveMode === 'replyAll')) {
+      // Mark the original email with $answered or $forwarded keyword. Route the
+      // write to the email's own account so the flag lands on shared/group-mailbox
+      // messages instead of being dropped against the reaching account. (#281)
+      if (originalEmailId && (effectiveMode === 'reply' || effectiveMode === 'replyAll' || effectiveMode === 'forward')) {
+        const s = useEmailStore.getState();
+        const orig = s.emails.find(e => e.id === originalEmailId);
+        const kwClientId = s.isUnifiedView ? orig?.sourceClientAccountId : undefined;
+        const kwAccountId = s.isUnifiedView ? orig?.sourceAccountId : undefined;
+        const kwClient = kwClientId
+          ? (useAuthStore.getState().getClientForAccount(kwClientId) ?? client)
+          : client;
+        const keyword = effectiveMode === 'forward' ? '$forwarded' : '$answered';
         try {
-          await client.setKeyword(originalEmailId, '$answered');
+          await kwClient.setKeyword(originalEmailId, keyword, kwAccountId);
         } catch (e) {
-          debug.error('Failed to set $answered keyword:', e);
-        }
-      } else if (originalEmailId && effectiveMode === 'forward') {
-        try {
-          await client.setKeyword(originalEmailId, '$forwarded');
-        } catch (e) {
-          debug.error('Failed to set $forwarded keyword:', e);
+          debug.error(`Failed to set ${keyword} keyword:`, e);
         }
       }
 
@@ -1273,7 +1290,7 @@ export default function Home() {
         },
         newTo,
         newCc,
-        locale: useLocaleStore.getState().locale,
+        locale: getEffectiveLocale(),
         timeFormat: useSettingsStore.getState().timeFormat,
         unknownLabel: tCommon('unknown'),
         labels: {
@@ -1645,6 +1662,45 @@ export default function Home() {
     }
   };
 
+  const handleTogglePinned = async (emailToPin: Email) => {
+    if (!client) return;
+
+    try {
+      const email = emails.find(e => e.id === emailToPin.id) ?? emailToPin;
+      const isPinned = email.keywords?.['$pinned'] === true;
+      // JMAP keywords are a set of present keys - drop the key to unpin
+      // rather than writing a false value.
+      const keywords = { ...email.keywords };
+      if (isPinned) {
+        delete keywords['$pinned'];
+      } else {
+        keywords['$pinned'] = true;
+      }
+
+      // Same unified-view routing as color tags: write to the email's own
+      // account via the login it is reachable through. (#281)
+      const pinClientId = isUnifiedView ? email.sourceClientAccountId : undefined;
+      const pinAccountId = isUnifiedView ? email.sourceAccountId : undefined;
+      const pinClient = pinClientId
+        ? (useAuthStore.getState().getClientForAccount(pinClientId) ?? client)
+        : client;
+
+      await pinClient.updateEmailKeywords(email.id, keywords, pinAccountId);
+
+      // Patch in place so the icon flips immediately, then refetch the first
+      // page so the mail floats/sinks per the server's pinned-first sort.
+      // Skip the refetch where that sort does not apply (unified views) or
+      // where it would replace a tag-filtered list (refreshCurrentMailbox
+      // fetches by folder only).
+      setEmailKeywordsLocal(email.id, keywords);
+      if (!isUnifiedView && !useEmailStore.getState().selectedKeyword) {
+        void refreshCurrentMailbox(client);
+      }
+    } catch (error) {
+      console.error("Failed to toggle pin:", error);
+    }
+  };
+
   const handleSetColorTag = async (emailId: string, color: string | null) => {
     if (!client) return;
 
@@ -1673,8 +1729,20 @@ export default function Home() {
         }
       }
 
+      // In unified view route the write to the email's own account, reached
+      // through the login it is reachable via (`sourceClientAccountId`) and
+      // applied to its owning JMAP account (`sourceAccountId`). For personal
+      // sources these resolve to the account itself, so behavior is unchanged.
+      // Without this, tags on shared/group-mailbox messages are written to the
+      // reaching account and silently dropped by the server. (#281)
+      const tagClientId = isUnifiedView ? email.sourceClientAccountId : undefined;
+      const tagAccountId = isUnifiedView ? email.sourceAccountId : undefined;
+      const tagClient = tagClientId
+        ? (useAuthStore.getState().getClientForAccount(tagClientId) ?? client)
+        : client;
+
       // Update email keywords via JMAP
-      await client.updateEmailKeywords(emailId, keywords);
+      await tagClient.updateEmailKeywords(emailId, keywords, tagAccountId);
 
       // Patch the email in place so the list keeps its scroll/pagination state
       // instead of being reset to the first page by a full refetch.
@@ -1712,7 +1780,15 @@ export default function Home() {
       setTabletListVisible(true);
     }
     if (viewingClient) {
-      await fetchEmails(viewingClient, mailboxId);
+      // Keep an active search applied when switching folders (#553); the
+      // store actions resolve the viewing account's client internally.
+      if (!isFilterEmpty(searchFilters)) {
+        await advancedSearch(viewingClient);
+      } else if (searchQuery) {
+        await searchEmails(viewingClient, searchQuery);
+      } else {
+        await fetchEmails(viewingClient, mailboxId);
+      }
     }
   };
 
@@ -1802,8 +1878,13 @@ export default function Home() {
     }
 
     if (client) {
-      // If there's an active search, re-run it in the new mailbox
-      if (searchQuery) {
+      // If there's an active search, re-run it in the new mailbox. Advanced
+      // filters must go through advancedSearch (which also includes the text
+      // query) — falling back to fetchEmails would silently drop them while
+      // the UI still shows them as active (#553).
+      if (!isFilterEmpty(searchFilters)) {
+        await advancedSearch(client);
+      } else if (searchQuery) {
         await searchEmails(client, searchQuery);
       } else {
         await fetchEmails(client, mailboxId);
@@ -2281,11 +2362,22 @@ export default function Home() {
       return;
     }
 
-    // Mark the original email as answered
-    try {
-      await client.setKeyword(originalEmailId, '$answered');
-    } catch (e) {
-      debug.error('Failed to set $answered keyword:', e);
+    // Mark the original email as answered. Route the write to the email's own
+    // account so the flag lands on shared/group-mailbox messages instead of
+    // being dropped against the reaching account. (#281)
+    {
+      const s = useEmailStore.getState();
+      const orig = s.emails.find(e => e.id === originalEmailId);
+      const kwClientId = s.isUnifiedView ? orig?.sourceClientAccountId : undefined;
+      const kwAccountId = s.isUnifiedView ? orig?.sourceAccountId : undefined;
+      const kwClient = kwClientId
+        ? (useAuthStore.getState().getClientForAccount(kwClientId) ?? client)
+        : client;
+      try {
+        await kwClient.setKeyword(originalEmailId, '$answered', kwAccountId);
+      } catch (e) {
+        debug.error('Failed to set $answered keyword:', e);
+      }
     }
 
     // Refresh emails to show the sent reply
@@ -2677,17 +2769,19 @@ export default function Home() {
           <div
             className={cn(
               "relative flex flex-col bg-background",
-              isHorizontalMailLayout ? "md:w-full md:h-auto" : "h-full border-r border-border",
+              isHorizontalMailLayout
+                ? (shouldHideHorizontalViewerPane ? "md:w-full md:min-h-0" : "md:w-full md:h-auto")
+                : "h-full border-e border-border",
               // Mobile: full width, hidden when viewing email
-              "max-md:flex-1 max-md:border-r-0 max-md:border-b-0",
+              "max-md:flex-1 max-md:border-e-0 max-md:border-b-0",
               isMobile && activeView !== "list" && "max-md:hidden",
               // Tablet/Desktop: fixed width with collapse animation
-              !isHorizontalMailLayout && (shouldHideViewerPane ? "md:flex-1 md:border-r-0" : "md:flex-shrink-0"),
+              !isHorizontalMailLayout && (shouldHideViewerPane ? "md:flex-1 md:border-e-0" : "md:flex-shrink-0"),
               isHorizontalMailLayout && (shouldHideHorizontalViewerPane ? "md:flex-1" : "md:flex-shrink-0"),
               isHorizontalMailLayout && !shouldHideHorizontalViewerPane && "md:shadow-[0_8px_12px_-6px_rgba(0,0,0,0.18)] dark:md:shadow-[0_8px_14px_-6px_rgba(0,0,0,0.55)]",
               !isHorizontalMailLayout && "md:shadow-sm",
               !isResizing && "transition-all duration-200 ease-out",
-              shouldCollapseListPane && "md:w-0 md:opacity-0 md:overflow-hidden md:border-r-0"
+              shouldCollapseListPane && "md:w-0 md:opacity-0 md:overflow-hidden md:border-e-0"
             )}
             style={
               isMobile
@@ -2740,13 +2834,13 @@ export default function Home() {
                     )}
                   </button>
                   <form onSubmit={(e) => { e.preventDefault(); if (searchQuery.trim()) handleSearch(searchQuery); }} className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Search className="absolute start-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
                       type="text"
                       placeholder={t("sidebar.search_placeholder_hint")}
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className={cn("pl-9 h-9", searchQuery && "pr-8")}
+                      className={cn("ps-9 h-9", searchQuery && "pe-8")}
                       data-search-input
                       data-tour="search-input"
                       disabled={isUnifiedView || isScheduledView}
@@ -2756,7 +2850,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={handleClearSearch}
-                        className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                        className="absolute end-2 top-1/2 transform -translate-y-1/2 p-1 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                         aria-label={t("sidebar.clear_search")}
                       >
                         <X className="w-4 h-4" />
@@ -2827,7 +2921,7 @@ export default function Home() {
                     </div>
                     <div className="flex items-center gap-1">
                       <Button variant="ghost" size="sm" onClick={() => { clearSearchFilters(); setShowAdvancedFields(false); if (client) advancedSearch(client); }} className="h-7 px-2 text-xs text-muted-foreground">
-                        <RotateCcw className="w-3 h-3 mr-1" />
+                        <RotateCcw className="w-3 h-3 me-1" />
                         {t("advanced_search.clear")}
                       </Button>
                     </div>
@@ -3011,6 +3105,9 @@ export default function Home() {
                     await toggleStar(client, email.id);
                   }
                 }}
+                onTogglePinned={async (email) => {
+                  await handleTogglePinned(email);
+                }}
                 onDelete={async (email) => {
                   await handleDelete(email);
                 }}
@@ -3049,7 +3146,7 @@ export default function Home() {
               }}
               className={cn(
                 "absolute z-40 rounded-full shadow-lg",
-                isMobile ? "bottom-4 right-4 h-14 w-14" : "bottom-4 right-4 h-12 w-12"
+                isMobile ? "bottom-4 end-4 h-14 w-14" : "bottom-4 end-4 h-12 w-12"
               )}
               aria-label={t('sidebar.compose')}
               title={t('sidebar.compose_hint')}
@@ -3108,6 +3205,11 @@ export default function Home() {
                 <EmailComposer
                   key={composerSessionId}
                   mode={pendingDraft?.mode ?? composerMode}
+                  composeFromAccountEmail={
+                    useAccountStore
+                      .getState()
+                      .getAccountById(viewingAccountId ?? activeAccountId ?? '')?.email
+                  }
                   replyTo={pendingDraft !== null ? pendingDraft.replyTo : (selectedEmail ? {
                     from: selectedEmail.from,
                     replyToAddresses: selectedEmail.replyTo,
@@ -3172,13 +3274,13 @@ export default function Home() {
                   setShowComposer(true);
                   if (isMobile) setActiveView('viewer');
                 }}
-                className="flex items-center gap-3 px-4 py-2.5 bg-primary/10 border-b border-primary/20 hover:bg-primary/15 transition-colors cursor-pointer w-full text-left"
+                className="flex items-center gap-3 px-4 py-2.5 bg-primary/10 border-b border-primary/20 hover:bg-primary/15 transition-colors cursor-pointer w-full text-start"
               >
                 <PenLine className="w-4 h-4 text-primary shrink-0" />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-medium text-primary">{t('email_composer.continue_draft')}</span>
                   {pendingDraft.subject && (
-                    <span className="text-xs text-muted-foreground ml-2 truncate">{pendingDraft.subject}</span>
+                    <span className="text-xs text-muted-foreground ms-2 truncate">{pendingDraft.subject}</span>
                   )}
                 </div>
                 <X

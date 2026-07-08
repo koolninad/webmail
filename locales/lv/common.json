@@ -436,7 +436,9 @@
       "confirm_button": "Apstiprināt",
       "cancel": "Atcelt",
       "success_http": "Atteikšanās lapa atvērta jaunā cilnē",
-      "success_mailto": "Atteikšanās pieprasījums nosūtīts",
+      "success_mailto": "Atrakstīšanās e-pasts nosūtīts",
+      "confirm_message_http": "Atrakstīšanās lapa tiks atvērta jaunā cilnē.",
+      "confirm_message_mailto": "Sūtītājam tiks nosūtīts atrakstīšanās e-pasts.",
       "error": "Neizdevās atteikties",
       "dismiss": "Aizvērt"
     },
@@ -632,7 +634,9 @@
     "validation": {
       "recipient_required": "Norādiet vismaz vienu saņēmēju",
       "subject_required": "Norādiet tematu",
-      "body_required": "Ierakstiet ziņojumu vai pievienojiet failu"
+      "body_required": "Ierakstiet ziņojumu vai pievienojiet failu",
+      "attachments_uploading": "Pielikumi joprojām tiek augšupielādēti — nosūtīs, tiklīdz tas pabeigts",
+      "attachment_upload_failed": "Nav nosūtīts - pielikumu neizdevās augšupielādēt. Noņemiet to un mēģiniet vēlreiz."
     },
     "upload_progress": "Augšupielāde {uploaded} / {total}",
     "upload_cancel": "Atcelt augšupielādi",
@@ -675,7 +679,9 @@
     "recipient_edit_email": "Rediģēt e-pasta adresi",
     "recipient_edit_name": "Rediģēt parādāmo vārdu",
     "recipient_email_placeholder": "E-pasta adrese",
-    "recipient_name_placeholder": "Parādāmais vārds"
+    "recipient_name_placeholder": "Parādāmais vārds",
+    "autocomplete_search_server": "Meklēt serverī",
+    "autocomplete_searching": "Meklē..."
   },
   "confirm_dialog": {
     "confirm": "Apstiprināt",
@@ -803,7 +809,9 @@
     "nl": "Nederlands",
     "pl": "Polski",
     "pt": "Português",
+    "he": "עברית",
     "ru": "Русский",
+    "sk": "Slovenčina",
     "uk": "Українська",
     "zh": "简体中文",
     "fa": "فارسی",
@@ -933,6 +941,10 @@
         "label": "Krāsainas sānjoslas ikonas",
         "description": "Iekrāsojiet mapju un birku ikonas pēc to veida (zila Iesūtne, sarkana Mēstules, zaļa Nosūtītie utt.). Atspējojiet, lai iegūtu vienkrāsainu sānjoslu."
       },
+      "tint_list_rows": {
+        "label": "Tint List Rows by Tag Color",
+        "description": "Shade each message row with its first tag color. Disable to keep rows plain; tag dots and chips still show the color."
+      },
       "show_folder_total_count": {
         "label": "Rādīt kopējo ziņojumu skaitu",
         "description": "Rāda kopējo ziņojumu skaitu blakus mapēm un tagiem, kā arī nelasīto ziņojumu skaitu. Atspējojiet, lai rādītu tikai nelasītos."
@@ -1046,6 +1058,14 @@
         "preview_today": "Šodien:",
         "preview_this_week": "Šajā nedēļā:",
         "preview_older": "Vecāks:"
+      },
+      "date_locale": {
+        "label": "Date format region",
+        "description": "How numeric dates are ordered (day, month, year)",
+        "auto": "Automatic (match language)",
+        "iso": "ISO 8601 (YYYY-MM-DD)",
+        "dmy": "Day/Month/Year",
+        "mdy": "Month/Day/Year"
       },
       "time_format": {
         "label": "Laika formāts",
@@ -1253,8 +1273,12 @@
         "unsupported": "Pašreizējais konts neziņo par aizturētas sūtīšanas atbalstu. Iestatījums joprojām tiks saglabāts citiem kontiem."
       },
       "return_to_list_after_action": {
-        "label": "Return to list after delete or mark unread",
-        "description": "After deleting or marking the open message unread, go back to the message list instead of opening the next message."
+        "label": "Atgriezties sarakstā pēc dzēšanas vai atzīmēšanas kā nelasītu",
+        "description": "Pēc atvērtā ziņojuma dzēšanas vai atzīmēšanas kā nelasīta atgriezieties ziņojumu sarakstā, nevis atveriet nākamo ziņojumu."
+      },
+      "rtl_editing": {
+        "label": "Rakstīšanas no labās uz kreiso atbalsts",
+        "description": "Pievieno redaktora rīkjoslai virziena pogu, ar kuru rindkopas var iestatīt no kreisās uz labo vai no labās uz kreiso"
       }
     },
     "composer": {
@@ -1942,6 +1966,8 @@
     "mark_unread": "Atzīmēt kā nelasītu",
     "star": "Pievienot zvaigznīti",
     "unstar": "Noņemt zvaigznīti",
+    "pin": "Piespraust",
+    "unpin": "Atspraust",
     "move_to": "Pārvietot uz...",
     "archive": "Arhivēt",
     "delete": "Dzēst",
@@ -2878,7 +2904,19 @@
       "sep": "sept.",
       "oct": "okt.",
       "nov": "nov.",
-      "dec": "dec."
+      "dec": "dec.",
+      "far": "Farvardin",
+      "ord": "Ordibehesht",
+      "kho": "Khordad",
+      "tir": "Tir",
+      "mor": "Mordad",
+      "sha": "Shahrivar",
+      "meh": "Mehr",
+      "aba": "Aban",
+      "aza": "Azar",
+      "dey": "Dey",
+      "bah": "Bahman",
+      "esf": "Esfand"
     },
     "nav_open_menu": "Atvērt izvēlni"
   },

@@ -38,11 +38,11 @@ function MailLayoutPreview({
 
       <div className="mt-3 overflow-hidden rounded-lg border border-border bg-muted/20">
         <div className="flex h-28">
-          <div className="w-11 border-r border-border bg-muted/40" />
+          <div className="w-11 border-e border-border bg-muted/40" />
 
           {value === 'split' && (
             <>
-              <div className="w-28 border-r border-border bg-background">
+              <div className="w-28 border-e border-border bg-background">
                 {MAIL_LAYOUT_PREVIEW_ROWS.map((row) => (
                   <div
                     key={row.subject}
@@ -118,7 +118,7 @@ function MailLayoutPreview({
 export function LayoutSettings() {
   const t = useTranslations('settings.appearance');
   const tEmail = useTranslations('settings.email_behavior');
-  const { toolbarPosition, showToolbarLabels, hideAccountSwitcher, showRailAccountList, enableUnifiedMailbox, includeGroupInUnified, enableAllMailView, allMailFolderIds, enableCrossUnreadView, enableCrossStarredView, enableCrossAllView, colorfulSidebarIcons, showFolderTotalCount, mailLayout, proInterface, updateSetting } = useSettingsStore();
+  const { toolbarPosition, showToolbarLabels, hideAccountSwitcher, showRailAccountList, enableUnifiedMailbox, includeGroupInUnified, enableAllMailView, allMailFolderIds, enableCrossUnreadView, enableCrossStarredView, enableCrossAllView, colorfulSidebarIcons, tintListRowsByTag, showFolderTotalCount, mailLayout, proInterface, updateSetting } = useSettingsStore();
   const { isSettingLocked, isSettingHidden, isFeatureEnabled } = usePolicyStore();
   const accounts = useAccountStore(s => s.accounts);
   const activeAccountId = useAccountStore(s => s.activeAccountId);
@@ -217,6 +217,13 @@ export function LayoutSettings() {
         />
       </SettingItem>
 
+      <SettingItem label={t('tint_list_rows.label')} description={t('tint_list_rows.description')}>
+        <ToggleSwitch
+          checked={tintListRowsByTag}
+          onChange={(checked) => updateSetting('tintListRowsByTag', checked)}
+        />
+      </SettingItem>
+
       <SettingItem label={t('show_folder_total_count.label')} description={t('show_folder_total_count.description')}>
         <ToggleSwitch
           checked={showFolderTotalCount}
@@ -238,7 +245,7 @@ export function LayoutSettings() {
       )}
 
       {enableUnifiedMailbox && hasGroupInboxes && !isSettingHidden('includeGroupInUnified') && (
-        <div className="ml-4 border-l-2 border-border pl-4 -mt-2">
+        <div className="ms-4 border-s-2 border-border ps-4 -mt-2">
           <SettingItem
             label={t('unified_mailbox.include_group.label')}
             description={t('unified_mailbox.include_group.description')}
@@ -253,7 +260,7 @@ export function LayoutSettings() {
       )}
 
       {enableUnifiedMailbox && crossViews.some(c => c.allowed) && (
-        <div className="ml-4 border-l-2 border-border pl-4 -mt-2 space-y-2">
+        <div className="ms-4 border-s-2 border-border ps-4 -mt-2 space-y-2">
           {crossViews.map(({ setting, value, allowed, labelKey, descKey }) => (
             allowed && !isSettingHidden(setting) && (
               <SettingItem
@@ -286,7 +293,7 @@ export function LayoutSettings() {
       )}
 
       {allMailViewAllowed && enableAllMailView && (
-        <div className="ml-4 border-l-2 border-border pl-4 -mt-2 space-y-2">
+        <div className="ms-4 border-s-2 border-border ps-4 -mt-2 space-y-2">
           <div>
             <div className="text-sm font-medium text-foreground">{t('all_mail.folders_label')}</div>
             <div className="text-xs text-muted-foreground">{t('all_mail.folders_description')}</div>
@@ -305,7 +312,7 @@ export function LayoutSettings() {
                     key={mb.id}
                     type="button"
                     onClick={() => toggleAllMailFolder(mb.id)}
-                    className="w-full flex items-center gap-2.5 py-1.5 px-2 rounded-md hover:bg-muted/50 text-left"
+                    className="w-full flex items-center gap-2.5 py-1.5 px-2 rounded-md hover:bg-muted/50 text-start"
                     role="checkbox"
                     aria-checked={checked}
                   >

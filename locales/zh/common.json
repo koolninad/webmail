@@ -436,7 +436,9 @@
       "confirm_button": "确认",
       "cancel": "取消",
       "success_http": "取消订阅页面已在新标签页中打开",
-      "success_mailto": "取消订阅请求已发送",
+      "success_mailto": "退订邮件已发送",
+      "confirm_message_http": "退订页面将在新标签页中打开。",
+      "confirm_message_mailto": "将向发件人发送退订邮件。",
       "error": "无法取消订阅",
       "dismiss": "关闭"
     },
@@ -632,7 +634,9 @@
     "validation": {
       "recipient_required": "请添加收件人",
       "subject_required": "请添加主题",
-      "body_required": "请输入邮件内容或添加附件"
+      "body_required": "请输入邮件内容或添加附件",
+      "attachments_uploading": "附件仍在上传中，上传完成后将自动发送",
+      "attachment_upload_failed": "未发送 - 附件上传失败。请移除该附件后重试。"
     },
     "upload_progress": "正在上传 {uploaded} / {total}",
     "upload_cancel": "取消上传",
@@ -675,7 +679,9 @@
     "recipient_edit_email": "编辑电子邮件地址",
     "recipient_edit_name": "编辑显示名称",
     "recipient_email_placeholder": "电子邮件地址",
-    "recipient_name_placeholder": "显示名称"
+    "recipient_name_placeholder": "显示名称",
+    "autocomplete_search_server": "在服务器上搜索",
+    "autocomplete_searching": "搜索中..."
   },
   "confirm_dialog": {
     "confirm": "确认",
@@ -803,7 +809,9 @@
     "nl": "Nederlands",
     "pl": "Polski",
     "pt": "Português",
+    "he": "עברית",
     "ru": "Русский",
+    "sk": "Slovenčina",
     "uk": "Українська",
     "zh": "简体中文",
     "fa": "فارسی",
@@ -933,6 +941,10 @@
         "label": "彩色侧边栏图标",
         "description": "按类型为文件夹和标签图标着色（蓝色收件箱、红色垃圾邮件、绿色已发送等）。禁用以获得单色侧边栏。"
       },
+      "tint_list_rows": {
+        "label": "Tint List Rows by Tag Color",
+        "description": "Shade each message row with its first tag color. Disable to keep rows plain; tag dots and chips still show the color."
+      },
       "show_folder_total_count": {
         "label": "显示邮件总数",
         "description": "在文件夹和标签旁边显示邮件总数，以及未读数量。停用后仅显示未读数量。"
@@ -1046,6 +1058,14 @@
         "preview_today": "今天：",
         "preview_this_week": "本周：",
         "preview_older": "更早："
+      },
+      "date_locale": {
+        "label": "Date format region",
+        "description": "How numeric dates are ordered (day, month, year)",
+        "auto": "Automatic (match language)",
+        "iso": "ISO 8601 (YYYY-MM-DD)",
+        "dmy": "Day/Month/Year",
+        "mdy": "Month/Day/Year"
       },
       "time_format": {
         "label": "时间格式",
@@ -1253,8 +1273,12 @@
         "unsupported": "当前账户未声明支持延迟发送。该设置仍会为其他账户保存。"
       },
       "return_to_list_after_action": {
-        "label": "Return to list after delete or mark unread",
-        "description": "After deleting or marking the open message unread, go back to the message list instead of opening the next message."
+        "label": "删除或标记为未读后返回列表",
+        "description": "删除打开的邮件或将其标记为未读后，返回邮件列表而不是打开下一封邮件。"
+      },
+      "rtl_editing": {
+        "label": "从右到左编辑支持",
+        "description": "在编辑器工具栏中添加方向按钮，可将段落设置为从左到右或从右到左"
       }
     },
     "composer": {
@@ -1942,6 +1966,8 @@
     "mark_unread": "标记为未读",
     "star": "加星标",
     "unstar": "取消星标",
+    "pin": "固定",
+    "unpin": "取消固定",
     "move_to": "移动到…",
     "archive": "归档",
     "delete": "删除",
@@ -2878,7 +2904,19 @@
       "sep": "9月",
       "oct": "10月",
       "nov": "11月",
-      "dec": "12月"
+      "dec": "12月",
+      "far": "Farvardin",
+      "ord": "Ordibehesht",
+      "kho": "Khordad",
+      "tir": "Tir",
+      "mor": "Mordad",
+      "sha": "Shahrivar",
+      "meh": "Mehr",
+      "aba": "Aban",
+      "aza": "Azar",
+      "dey": "Dey",
+      "bah": "Bahman",
+      "esf": "Esfand"
     },
     "nav_open_menu": "打开菜单"
   },
