@@ -8,7 +8,9 @@ import { toast as appToast } from '@/stores/toast-store';
 import { useAuthStore } from '@/stores/auth-store';
 import { useEmailStore } from '@/stores/email-store';
 import { apiFetch } from '../browser-navigation';
-import { awaitDialog } from './host-dialog';
+import { awaitDialog, awaitPrompt, type PromptField } from './host-dialog';
+import { fileStorage } from '../plugin-storage';
+import { generateUUID } from '../utils';
 
 /**
  * Methods only callable from the privileged (same-origin) tier. These expose
@@ -19,6 +21,8 @@ import { awaitDialog } from './host-dialog';
 const PRIVILEGED_ONLY_METHODS = new Set<string>([
   'jmap.fetchBlob',
   'jmap.sendRaw',
+  'upfiles.get',
+  'upfiles.set',
 ]);
 
 const PERM_PER_METHOD: Record<string, Permission | null> = {
@@ -38,6 +42,11 @@ const PERM_PER_METHOD: Record<string, Permission | null> = {
   // jmap (privileged-tier only; see PRIVILEGED_ONLY_METHODS)
   'jmap.fetchBlob': 'email:blob-read',
   'jmap.sendRaw': 'email:raw-send',
+  // uploaded files (privileged-tier only) : 
+  // Used only to get a file before it is uploaded to alterate it. 
+  // To just read, use jmap.fetchBlob.
+  'upfiles.get' : 'email:blob-write',
+  'upfiles.save' : 'email:blob-write',
   // admin
   'admin.getConfig': 'admin:config',
   'admin.getAllConfig': 'admin:config',
@@ -46,6 +55,8 @@ const PERM_PER_METHOD: Record<string, Permission | null> = {
   // ui - any plugin can ask the host to render a modal or open a URL.
   'ui.confirm': null,
   'ui.alert': null,
+  'ui.prompt': null,
+  'ui.rerenderEmail': null,
   'ui.openExternalUrl': null,
 };
 
@@ -263,6 +274,19 @@ async function doJmapSendRaw(
   );
 }
 
+// ─── Uploaded files in IndexedDB (privileged tier) ──────────────────────────
+
+async function getFile(fileID:string): Promise<File | null> {
+  return await fileStorage.getFile(fileID)
+}
+
+async function saveFile(formerFileID:string, file: File): Promise<string> {
+  const fileId = generateUUID();
+  await fileStorage.saveFile(fileId, file);
+  await fileStorage.deleteFile(formerFileID);
+  return fileId;
+}
+
 // ─── admin config (same as before) ────────────────────────────
 
 async function adminGetAll(pluginId: string): Promise<Record<string, unknown>> {
@@ -335,6 +359,8 @@ export async function dispatchApiCall(
       args[1] as string,
       args[2] as { delayedUntil?: string; envelopeRecipients?: string[] } | undefined,
     );
+    case 'upfiles.get' : return getFile(args[0] as string);
+    case 'upfiles.save' : return saveFile(args[0] as string, args[1] as File);
 
     case 'admin.getConfig':    return adminGet(plugin.id, args[0] as string);
     case 'admin.getAllConfig': return adminGetAll(plugin.id);
@@ -362,6 +388,35 @@ export async function dispatchApiCall(
         message: String(opts.message ?? ''),
         confirmLabel: typeof opts.confirmLabel === 'string' ? opts.confirmLabel : undefined,
       });
+      return undefined;
+    }
+    case 'ui.prompt': {
+      const opts = (args[0] ?? {}) as { title?: string; message?: string; confirmLabel?: string; cancelLabel?: string; fields?: PromptField[] };
+      const fields: PromptField[] = Array.isArray(opts.fields)
+        ? opts.fields.map((f) => ({
+            name: String(f.name),
+            label: String(f.label),
+            type: f.type === 'password' ? 'password' : 'text',
+            placeholder: typeof f.placeholder === 'string' ? f.placeholder : undefined,
+            required: !!f.required,
+          }))
+        : [];
+      return awaitPrompt({
+        pluginId: plugin.id,
+        kind: 'prompt',
+        title: String(opts.title ?? plugin.name ?? 'Enter details'),
+        message: String(opts.message ?? ''),
+        confirmLabel: typeof opts.confirmLabel === 'string' ? opts.confirmLabel : undefined,
+        cancelLabel: typeof opts.cancelLabel === 'string' ? opts.cancelLabel : undefined,
+        fields,
+      });
+    }
+    case 'ui.rerenderEmail': {
+      // Re-run the onRenderEmailBody hook for the currently open message. Used
+      // by crypto plugins after they change decryption state (e.g. an S/MIME key
+      // was just unlocked) so the body re-decrypts without a full reload — which
+      // would wipe the in-memory session keys.
+      window.dispatchEvent(new CustomEvent('plugin:rerender-email'));
       return undefined;
     }
     case 'ui.openExternalUrl': {

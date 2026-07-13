@@ -708,6 +708,22 @@ export interface OutgoingEmail {
   /** Free-form custom headers added by the composer or earlier handlers */
   headers?: Record<string, string>;
 }
+/**
+ * Passed to onBeforeDraftAutoSave handlers as a transform value.
+ */
+export interface AlmostSavedDraft{
+   to: string[],
+    subject: string,
+    body: string,
+    cc?: string[],
+    bcc?: string[],
+    identityId?: string,
+    fromEmail?: string,
+    draftId?: string,
+    attachments?: Array<{ blobId: string; name: string; type: string; size: number; disposition?: 'attachment' | 'inline'; cid?: string }>,
+    fromName?: string,
+    htmlBody?: string
+}
 
 /**
  * Passed to onBeforeReply / onBeforeReplyAll / onBeforeForward intercept hooks.
@@ -853,6 +869,11 @@ export interface RecipientSuggestion {
   /** Optional source label rendered as a small tag */
   source?: string;
   avatarUrl?: string;
+  /**
+   * Present when the suggestion is a contact group (empty email). Selecting
+   * it inserts a single group chip that expands into the members on send.
+   */
+  group?: { id: string; memberCount: number };
 }
 
 /**
@@ -919,6 +940,8 @@ export const ALL_PERMISSIONS = [
   'email:raw-send',
   // Fetch a message blob's raw bytes by blobId (for decrypt/verify).
   'email:blob-read',
+  // Upload a file to server (for encrypt).
+  'email:blob-write',
   // Replace the rendered body of an opened email (render-takeover).
   'email:render-takeover',
   'calendar:read', 'calendar:write',

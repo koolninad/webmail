@@ -189,6 +189,16 @@ function buildPluginApi(manifest: PluginManifest) {
         opts?: { delayedUntil?: string; envelopeRecipients?: string[] },
       ) => callApi('jmap.sendRaw', [rawBytes, identityId, opts]),
     },
+    /**
+     * Used to alterate files before they are uploaded to server.
+     * Edited files are saved on indexedDB and remove once the upload to server begins.
+     */
+    upfiles: {
+      save: (formerFileId:string, file:File) =>
+        callApi('upfiles.save', [formerFileId, file]) as Promise<string>,
+      get: (fileId:string) =>
+        callApi('upfiles.get', [fileId]) as Promise<File>,
+    },
     toast: {
       success: (m: string) => { void callApi('toast.success', [m]); },
       error: (m: string) => { void callApi('toast.error', [m]); },
@@ -203,6 +213,19 @@ function buildPluginApi(manifest: PluginManifest) {
       /** Opens a host-rendered alert (one button). Resolves once dismissed. No timeout. */
       alert: (opts: { title?: string; message?: string; confirmLabel?: string }) =>
         callApi('ui.alert', [opts], 0) as Promise<void>,
+      /** Opens a host-rendered prompt collecting one or more (optionally masked)
+       *  fields. Resolves to a name→value map on submit, or null if cancelled.
+       *  No timeout. */
+      prompt: (opts: {
+        title?: string;
+        message?: string;
+        confirmLabel?: string;
+        cancelLabel?: string;
+        fields?: Array<{ name: string; label: string; type?: 'text' | 'password'; placeholder?: string; required?: boolean }>;
+      }) => callApi('ui.prompt', [opts], 0) as Promise<Record<string, string> | null>,
+      /** Re-runs the onRenderEmailBody hook for the open message (e.g. after a
+       *  crypto plugin unlocks a key) so its body re-renders without a reload. */
+      rerenderEmail: () => callApi('ui.rerenderEmail', []) as Promise<void>,
       /** Opens an http/https URL in a new tab via host `window.open`. */
       openExternalUrl: (url: string, target?: string) =>
         callApi('ui.openExternalUrl', [url, target]) as Promise<void>,

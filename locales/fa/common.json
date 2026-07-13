@@ -681,12 +681,7 @@
     "recipient_email_placeholder": "آدرس ایمیل",
     "recipient_name_placeholder": "نام نمایشی",
     "autocomplete_search_server": "جستجو در سرور",
-    "autocomplete_searching": "در حال جستجو...",
-    "text_direction": {
-      "toggle": "تغییر جهت متن (چپ‌به‌راست / راست‌به‌چپ)",
-      "ltr": "چپ‌به‌راست",
-      "rtl": "راست‌به‌چپ"
-    }
+    "autocomplete_searching": "در حال جستجو..."
   },
   "confirm_dialog": {
     "confirm": "تأیید",
@@ -1885,8 +1880,7 @@
       "validation": {
         "empty": "نام قالب الزامی است",
         "too_long": "نام قالب باید ۲۰۰ کاراکتر یا کمتر باشد"
-      },
-      "image_too_large": "حجم تصویر بیش از حد مجاز (حداکثر ۱ مگابایت)"
+      }
     },
     "files": {
       "display": {
@@ -2113,9 +2107,9 @@
       "email_invalid": "ایمیل معتبر وارد کنید",
       "email_immutable": "پس از ایجاد قابل تغییر نیست",
       "reply_to_label": "پاسخ به (اختیاری)",
-      "reply_to_placeholder": "different@email.com",
+      "reply_to_placeholder": "different@example.com",
       "bcc_label": "رونوشت مخفی خودکار (اختیاری)",
-      "bcc_placeholder": "archive@email.com",
+      "bcc_placeholder": "archive@example.com",
       "text_signature_label": "امضای متنی",
       "html_signature_label": "امضای HTML",
       "signature_byte_counter": "{bytes} / {max} بایت",

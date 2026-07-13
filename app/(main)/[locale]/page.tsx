@@ -1354,6 +1354,8 @@ export default function Home() {
       draft = fullDraft;
     }
 
+    draft = await emailHooks.onBeforeEditDraft.transform(draft);
+
     const bodyText = draft.bodyValues
       ? Object.values(draft.bodyValues).map(v => v.value).join('\n')
       : '';
