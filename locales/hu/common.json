@@ -114,6 +114,7 @@
     "unified_archive": "Összes archívum",
     "unified_junk": "Összes spam",
     "all_accounts": "Minden fiók",
+    "unified_mailbox": "Egységes postafiók",
     "expand": "Kibontás",
     "collapse": "Összecsukás",
     "expand_tooltip": "Kibontás",
@@ -137,7 +138,9 @@
     "scheduled": "Ütemezett",
     "unified_all_unread": "Összes olvasatlan",
     "unified_all_starred": "Összes csillagozott",
-    "unified_all_mail": "Összes levél"
+    "unified_all_mail": "Összes levél",
+    "remove_account": "Remove account",
+    "remove_account_confirm": "Remove {account} from this device? You can add it back later."
   },
   "protocol_handlers": {
     "title": "Alapértelmezett alkalmazások",
@@ -274,6 +277,8 @@
     "no_subject": "(Nincs tárgy)",
     "no_body_content": "(Nincs elérhető tartalom)",
     "no_preview_available": "Nincs előnézet",
+    "show_quoted_text": "Idézett szöveg megjelenítése",
+    "hide_quoted_text": "Idézett szöveg elrejtése",
     "loading_email": "E-mail betöltése...",
     "loading": "Betöltés...",
     "reply": "Válasz",
@@ -650,7 +655,6 @@
     "continue_draft": "Piszkozat folytatása",
     "close_draft_title": "Piszkozat mentése vagy elvetése?",
     "close_draft_message": "Nem mentett változtatások vannak. Szeretnéd piszkozatként menteni vagy elvetni?",
-    "save_draft": "Piszkozat mentése",
     "smime_sign_on": "S/MIME aláírás engedélyezve",
     "smime_sign_off": "S/MIME aláírás engedélyezése",
     "smime_encrypt_on": "S/MIME titkosítás engedélyezve",
@@ -927,14 +931,16 @@
       "unified_mailbox": {
         "label": "Egységes postafiók",
         "description": "Összevont mappák (Beérkező, Elküldött, stb.) megjelenítése az összes csatlakoztatott fiók között",
+        "cross_account": {
+          "label": "Across all accounts",
+          "description": "Merge the unified mailbox across every connected account instead of staying within the active account."
+        },
         "include_group": {
           "label": "Csoportos postafiókok belefoglalása",
           "description": "Megosztott/csoportos postafiókok egyesítése az egységes nézetbe."
         }
       },
       "all_mail": {
-        "label": "All Mail",
-        "description": "Show an \"All Mail\" entry above your folders that merges messages from across this account's folders into one list.",
         "folders_label": "Folders in All Mail",
         "folders_description": "Choose which folders are merged into the All Mail view.",
         "account_hint": "Applies to {account}.",
@@ -951,6 +957,10 @@
       "show_folder_total_count": {
         "label": "Összes üzenet számának megjelenítése",
         "description": "Megjeleníti az üzenetek teljes számát a mappák és címkék mellett, az olvasatlanok számán túl. Kapcsolja ki, ha csak az olvasatlanok számát szeretné látni."
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "Pro felület (Kísérleti)",
@@ -1112,6 +1122,13 @@
         "trash_and_read": "Áthelyezés a Kukába és olvasottnak jelölés",
         "permanent": "Végleges törlés",
         "warning": "Az e-mailek véglegesen törlődnek és nem állíthatók vissza. Ez a művelet visszafordíthatatlan."
+      },
+      "message_spacing": {
+        "label": "Üzenet térköze",
+        "description": "Térköz az üzenet törzse körül olvasáskor",
+        "auto": "Automatikus (ajánlott)",
+        "always": "Mindig legyen térköz",
+        "edge": "Széltől szélig"
       },
       "archive_mode": {
         "label": "Archiválás helye",
@@ -1528,7 +1545,10 @@
         "subject_placeholder": "Távol vagyok",
         "body_label": "Üzenet szövege",
         "body_description": "Egyszerű szöveges üzenet tartalma",
-        "body_placeholder": "Köszönöm az e-mailed. Jelenleg távol vagyok az irodától, és visszatérésemkor válaszolok."
+        "body_placeholder": "Köszönöm az e-mailed. Jelenleg távol vagyok az irodától, és visszatérésemkor válaszolok.",
+        "html_label": "Formázott üzenet (HTML)",
+        "html_description": "Adjon hozzá egy formázott változatot hivatkozásokkal és stílussal. Azok a címzettek, akiknek a levelezőprogramja nem tudja megjeleníteni, a fenti egyszerű szöveget látják.",
+        "html_placeholder": "Írjon formázott távolléti választ…"
       },
       "preview": {
         "title": "Előnézet",
@@ -1560,6 +1580,8 @@
       "role_none": "Nincs",
       "create_folder": "Mappa létrehozása",
       "create_subfolder": "Almappa létrehozása",
+      "reorder": "Húzza az átrendezéshez",
+      "reorder_error": "Nem sikerült átrendezni a mappákat",
       "subfolder_of": "Itt: {name}",
       "subfolder_name": "Almappa neve",
       "new_folder_name": "Mappa neve",
@@ -1624,6 +1646,11 @@
         "label": "Billentyűparancsok",
         "description": "Elérhető billentyűparancsok megtekintése",
         "button": "Parancsok megtekintése"
+      },
+      "refresh_cache": {
+        "label": "Refresh cached data",
+        "description": "Reload contacts, calendars, and folders from the server. Keeps your accounts and sessions — fixes a stale or wrong view without signing out.",
+        "button": "Refresh"
       },
       "reset_settings": {
         "label": "Beállítások visszaállítása",

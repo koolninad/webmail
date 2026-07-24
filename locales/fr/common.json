@@ -114,6 +114,7 @@
     "unified_archive": "Toutes les archives",
     "unified_junk": "Tous les indésirables",
     "all_accounts": "Tous les comptes",
+    "unified_mailbox": "Boîte aux lettres unifiée",
     "expand": "Développer",
     "collapse": "Réduire",
     "expand_tooltip": "Développer",
@@ -137,7 +138,9 @@
     "scheduled": "Planifiés",
     "unified_all_unread": "Tous les non lus",
     "unified_all_starred": "Tous les favoris",
-    "unified_all_mail": "Tout le courrier"
+    "unified_all_mail": "Tout le courrier",
+    "remove_account": "Remove account",
+    "remove_account_confirm": "Remove {account} from this device? You can add it back later."
   },
   "protocol_handlers": {
     "title": "Applications par défaut",
@@ -274,6 +277,8 @@
     "no_subject": "(Sans objet)",
     "no_body_content": "(Aucun contenu disponible)",
     "no_preview_available": "Aucun aperçu disponible",
+    "show_quoted_text": "Afficher le texte cité",
+    "hide_quoted_text": "Masquer le texte cité",
     "loading_email": "Chargement de l'email...",
     "loading": "Chargement...",
     "reply": "Répondre",
@@ -654,7 +659,6 @@
     "continue_draft": "Continuer le brouillon",
     "close_draft_title": "Enregistrer ou supprimer le brouillon ?",
     "close_draft_message": "Vous avez des modifications non enregistrées. Voulez-vous enregistrer comme brouillon ou supprimer ?",
-    "save_draft": "Enregistrer le brouillon",
     "drop_files": "Déposez les fichiers à joindre",
     "show_less": "Afficher moins",
     "forgot_attachment": {
@@ -924,14 +928,16 @@
       "unified_mailbox": {
         "label": "Boîte aux lettres unifiée",
         "description": "Afficher les dossiers combinés (Réception, Envoyés, etc.) de tous les comptes connectés",
+        "cross_account": {
+          "label": "Across all accounts",
+          "description": "Merge the unified mailbox across every connected account instead of staying within the active account."
+        },
         "include_group": {
           "label": "Inclure les boîtes de groupe",
           "description": "Inclure également les boîtes partagées ou de groupe dans la vue unifiée."
         }
       },
       "all_mail": {
-        "label": "All Mail",
-        "description": "Show an \"All Mail\" entry above your folders that merges messages from across this account's folders into one list.",
         "folders_label": "Folders in All Mail",
         "folders_description": "Choose which folders are merged into the All Mail view.",
         "account_hint": "Applies to {account}.",
@@ -948,6 +954,10 @@
       "show_folder_total_count": {
         "label": "Afficher le nombre total de messages",
         "description": "Affiche le nombre total de messages à côté des dossiers et des étiquettes, en plus du nombre de messages non lus. Désactivez pour n'afficher que les messages non lus."
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "Interface Pro (expérimental)",
@@ -1109,6 +1119,13 @@
         "trash_and_read": "Déplacer vers la corbeille et marquer comme lu",
         "permanent": "Supprimer définitivement",
         "warning": "Les emails seront supprimés définitivement et ne pourront pas être récupérés. Cette action est irréversible."
+      },
+      "message_spacing": {
+        "label": "Espacement du message",
+        "description": "Marge autour du corps du message dans le lecteur",
+        "auto": "Automatique (recommandé)",
+        "always": "Toujours ajouter un espacement",
+        "edge": "Bord à bord"
       },
       "archive_mode": {
         "label": "Archiver dans",
@@ -1525,7 +1542,10 @@
         "subject_placeholder": "Absence du bureau",
         "body_label": "Corps du message",
         "body_description": "Contenu du message en texte brut",
-        "body_placeholder": "Merci pour votre email. Je suis actuellement absent du bureau et vous répondrai à mon retour."
+        "body_placeholder": "Merci pour votre email. Je suis actuellement absent du bureau et vous répondrai à mon retour.",
+        "html_label": "Message mis en forme (HTML)",
+        "html_description": "Ajoutez une version mise en forme avec des liens et du style. Les destinataires dont la messagerie ne peut pas l'afficher verront le texte brut ci-dessus.",
+        "html_placeholder": "Rédigez une réponse d'absence mise en forme…"
       },
       "preview": {
         "title": "Aperçu",
@@ -1557,6 +1577,8 @@
       "role_none": "Aucun",
       "create_folder": "Créer un dossier",
       "create_subfolder": "Créer un sous-dossier",
+      "reorder": "Glissez pour réorganiser",
+      "reorder_error": "Échec de la réorganisation des dossiers",
       "subfolder_of": "Dans {name}",
       "subfolder_name": "Nom du sous-dossier",
       "new_folder_name": "Nom du dossier",
@@ -1621,6 +1643,11 @@
         "label": "Raccourcis clavier",
         "description": "Voir les raccourcis clavier disponibles",
         "button": "Voir les raccourcis"
+      },
+      "refresh_cache": {
+        "label": "Refresh cached data",
+        "description": "Reload contacts, calendars, and folders from the server. Keeps your accounts and sessions — fixes a stale or wrong view without signing out.",
+        "button": "Refresh"
       },
       "reset_settings": {
         "label": "Réinitialiser les paramètres",

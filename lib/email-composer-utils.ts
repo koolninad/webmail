@@ -1,5 +1,8 @@
 import { isValidEmail } from "@/lib/validation";
 import { htmlToPlainText } from "@/lib/html-to-text";
+import { emailHooks } from "@/lib/plugin-hooks";
+import { Ellipsis, Lock, TriangleAlert } from "lucide-react";
+import type { Email } from "@/lib/jmap/types";
 
 const HTML_ESCAPE_MAP = {
   "&": "&amp;",
@@ -13,6 +16,41 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) =>
     HTML_ESCAPE_MAP[char as keyof typeof HTML_ESCAPE_MAP]
   );
+}
+
+/**
+ * Picks the plain-text and HTML bodies of an original message for seeding a
+ * reply/forward quote.
+ *
+ * Per RFC 8621 § 4.1.4 a message with only one body variant exposes that
+ * single part in BOTH `textBody` and `htmlBody`. So for an HTML-only message
+ * `textBody[0]` is the raw text/html source, and for a plain-text-only
+ * message `htmlBody[0]` is the text/plain part. Quoting either verbatim
+ * breaks the reply (#649): raw HTML tags end up in a plain-text quote, and
+ * plain text rendered as HTML collapses all newlines. Route by each part's
+ * actual MIME type instead: HTML listed under textBody is converted to
+ * readable text, and plain text listed under htmlBody is dropped so the
+ * composer's text path (escape + <br>) renders it.
+ */
+export function getQuoteBodies(
+  email: Pick<Email, "textBody" | "htmlBody" | "bodyValues" | "preview">
+): { body: string; htmlBody?: string } {
+  const textPart = email.textBody?.[0];
+  const htmlPart = email.htmlBody?.[0];
+  const textValue = textPart ? email.bodyValues?.[textPart.partId]?.value : undefined;
+  const htmlValue = htmlPart ? email.bodyValues?.[htmlPart.partId]?.value : undefined;
+
+  const textPartIsHtml = textPart?.type?.toLowerCase() === "text/html";
+  // A missing type is treated as HTML, matching the viewer's rendering path.
+  const htmlPartIsHtml = !htmlPart?.type || htmlPart.type.toLowerCase() === "text/html";
+
+  const body = textValue
+    ? (textPartIsHtml ? htmlToPlainText(textValue, { paragraphSpacing: true }) : textValue)
+    : (email.preview || "");
+  return {
+    body,
+    htmlBody: htmlPartIsHtml ? htmlValue || undefined : undefined,
+  };
 }
 
 export function plainTextToComposerBody(text: string): string {
@@ -110,6 +148,17 @@ export function extractUserAuthoredText(
 }
 
 /**
+ * Used for hook to let plugins enrich recipient chips with colors and icons. 
+ * The icon is a key into ICON_MAP, which maps to a lucide-react component.
+ */
+export const ICON_MAP = {
+  'lock': Lock,
+  'triangle-alert': TriangleAlert,
+  'ellipsis': Ellipsis,
+};
+type IconName = keyof typeof ICON_MAP;
+
+/**
  * A composer recipient. Display name is optional; email is required - except
  * for contact-group chips, which carry their already-resolved members and an
  * empty email. Group chips are expanded into their members when the message
@@ -119,6 +168,16 @@ export type Recipient = {
   name?: string;
   email: string;
   group?: { members: Array<{ name?: string; email: string }> };
+  extra?: {
+    color?: "success" | "destructive" | "warning"; // optional color for display purposes. May be populated by plugins via the onRecipientChipsChange hook.
+    icon?: IconName; // optional icon for display purposes. May be populated by plugins via the onRecipientChipsChange hook.
+    enriched?: boolean; // optional flag to indicate if the recipient has been enriched by plugins via the onRecipientChipsChange hook.
+  };
+};
+
+/** Enriches recipient chips with colors and icons. */
+export async function enrichChipsWithColorsAndIcons(chips: Recipient[]): Promise<Recipient[]> {
+  return await emailHooks.onRecipientChipsChange.transform(chips);
 };
 
 /**

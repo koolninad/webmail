@@ -114,6 +114,7 @@
     "unified_archive": "Усі архіви",
     "unified_junk": "Весь спам",
     "all_accounts": "Усі облікові записи",
+    "unified_mailbox": "Спільна поштова скринька",
     "expand": "Розгорнути",
     "collapse": "Згорнути",
     "expand_tooltip": "Розгорнути",
@@ -137,7 +138,9 @@
     "scheduled": "Заплановано",
     "unified_all_unread": "Усі непрочитані",
     "unified_all_starred": "Усі позначені",
-    "unified_all_mail": "Уся пошта"
+    "unified_all_mail": "Уся пошта",
+    "remove_account": "Remove account",
+    "remove_account_confirm": "Remove {account} from this device? You can add it back later."
   },
   "protocol_handlers": {
     "title": "Програми за замовчуванням",
@@ -274,6 +277,8 @@
     "no_subject": "(без теми)",
     "no_body_content": "(вміст відсутній)",
     "no_preview_available": "Попередній перегляд недоступний",
+    "show_quoted_text": "Показати цитований текст",
+    "hide_quoted_text": "Приховати цитований текст",
     "loading_email": "Завантаження електронної пошти...",
     "loading": "Завантаження...",
     "reply": "Відповісти",
@@ -647,7 +652,6 @@
     "continue_draft": "Продовжити чернетку",
     "close_draft_title": "Зберегти чи видалити чернетку?",
     "close_draft_message": "У вас є незбережені зміни. Зберегти це як чернетку чи видалити?",
-    "save_draft": "Зберегти чернетку",
     "smime_sign_on": "Підпис S/MIME увімкнено",
     "smime_sign_off": "Увімкнути підпис S/MIME",
     "smime_encrypt_on": "Шифрування S/MIME увімкнено",
@@ -924,14 +928,16 @@
       "unified_mailbox": {
         "label": "Спільна поштова скринька",
         "description": "Показувати об'єднані папки (Вхідні, Надіслані тощо) для всіх підключених облікових записів",
+        "cross_account": {
+          "label": "Across all accounts",
+          "description": "Merge the unified mailbox across every connected account instead of staying within the active account."
+        },
         "include_group": {
           "label": "Включати групові скриньки",
           "description": "Також об'єднувати спільні/групові скриньки у спільному перегляді."
         }
       },
       "all_mail": {
-        "label": "All Mail",
-        "description": "Show an \"All Mail\" entry above your folders that merges messages from across this account's folders into one list.",
         "folders_label": "Folders in All Mail",
         "folders_description": "Choose which folders are merged into the All Mail view.",
         "account_hint": "Applies to {account}.",
@@ -948,6 +954,10 @@
       "show_folder_total_count": {
         "label": "Показувати загальну кількість повідомлень",
         "description": "Показує загальну кількість повідомлень поруч із теками та мітками, разом із кількістю непрочитаних. Вимкніть, щоб показувати лише непрочитані."
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "Pro-інтерфейс (експериментальний)",
@@ -1109,6 +1119,13 @@
         "trash_and_read": "Перемістити в кошик і позначити як прочитане",
         "permanent": "Видалити назавжди",
         "warning": "Електронні листи буде видалено назавжди, і їх неможливо буде відновити. Ця дія незворотна."
+      },
+      "message_spacing": {
+        "label": "Відступи повідомлення",
+        "description": "Відступи навколо тексту повідомлення під час читання",
+        "auto": "Автоматично (рекомендовано)",
+        "always": "Завжди додавати відступи",
+        "edge": "Від краю до краю"
       },
       "archive_mode": {
         "label": "Архівувати в",
@@ -1525,7 +1542,10 @@
         "subject_placeholder": "Поза офісом",
         "body_label": "Тіло повідомлення",
         "body_description": "Вміст звичайного текстового повідомлення",
-        "body_placeholder": "Дякуємо за ваш електронний лист. Мене зараз немає в офісі, я відповім, коли повернуся."
+        "body_placeholder": "Дякуємо за ваш електронний лист. Мене зараз немає в офісі, я відповім, коли повернуся.",
+        "html_label": "Форматоване повідомлення (HTML)",
+        "html_description": "Додайте форматовану версію з посиланнями та оформленням. Одержувачі, чий поштовий клієнт не може її показати, побачать звичайний текст вище.",
+        "html_placeholder": "Напишіть форматовану відповідь про відсутність…"
       },
       "preview": {
         "title": "Попередній перегляд",
@@ -1557,6 +1577,8 @@
       "role_none": "Жодного",
       "create_folder": "Створити папку",
       "create_subfolder": "Створити вкладену папку",
+      "reorder": "Перетягніть, щоб змінити порядок",
+      "reorder_error": "Не вдалося змінити порядок папок",
       "subfolder_of": "Всередині {name}",
       "subfolder_name": "Назва вкладеної папки",
       "new_folder_name": "Назва папки",
@@ -1621,6 +1643,11 @@
         "label": "Комбінації клавіш",
         "description": "Переглянути доступні комбінації клавіш",
         "button": "Перегляд ярликів"
+      },
+      "refresh_cache": {
+        "label": "Refresh cached data",
+        "description": "Reload contacts, calendars, and folders from the server. Keeps your accounts and sessions — fixes a stale or wrong view without signing out.",
+        "button": "Refresh"
       },
       "reset_settings": {
         "label": "Скинути налаштування",

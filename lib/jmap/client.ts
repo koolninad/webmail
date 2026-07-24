@@ -15,6 +15,41 @@ function parseRecipientString(s: string): { name?: string; email: string } {
   return { email: trimmed };
 }
 
+/**
+ * Build the `mailboxIds` portion of an `Email/set` PatchObject as a full-property
+ * replacement — `{ mailboxIds: { <id>: true, ... } }` — instead of per-id
+ * `mailboxIds/<id>` JSON-Pointer patches.
+ *
+ * Two reasons:
+ *  1. It states the actual intent of a post-send / undo-send move: the message
+ *     should belong to *exactly* the given mailbox(es).
+ *  2. It avoids per-id JSON-Pointer tokens entirely. Stalwart (observed on
+ *     0.15.5) rejects an `Email/set` PatchObject whose pointer token is a
+ *     purely-numeric string — e.g. `mailboxIds/0` for a mailbox whose JMAP id is
+ *     "0" — with `invalidProperties: "Invalid patch value"` (it treats the digits
+ *     as a JSON-Pointer array index even though `mailboxIds` is a JSON object;
+ *     cf. RFC 6901 §4, and RFC 8620 §1.2's warning against interop-hostile ids).
+ *     That silently stranded already-delivered mail in Drafts for accounts whose
+ *     Drafts/Sent mailbox id happened to be all digits (a full member of `0`,
+ *     `1`, … `9`, `10`, … was verified rejected; ids containing a letter work).
+ *     Stalwart fixed the parsing in 0.16.5 (stalwartlabs/stalwart@175f34ea,
+ *     jmap-tools 0.1.5), but earlier deployments remain in the wild — and not
+ *     emitting interop-hostile pointer tokens is the safer shape regardless.
+ *
+ * This is a *replacement*: it drops any other mailbox membership the message
+ * had, so callers must know the complete target set. Do NOT also place a
+ * `mailboxIds/<id>` pointer key in the same PatchObject — a pointer whose prefix
+ * is another key in the object is illegal (RFC 8620 §5.3).
+ */
+function mailboxIdsReplacement(
+  mailboxId: string,
+  ...moreMailboxIds: string[]
+): { mailboxIds: Record<string, true> } {
+  const mailboxIds: Record<string, true> = { [mailboxId]: true };
+  for (const id of moreMailboxIds) mailboxIds[id] = true;
+  return { mailboxIds };
+}
+
 export class RateLimitError extends Error {
   retryAfterMs: number;
   constructor(retryAfterMs: number) {
@@ -26,6 +61,9 @@ export class RateLimitError extends Error {
 
 // JMAP protocol types - these are intentionally flexible due to server variations
 interface JMAPSession {
+  // The authenticated login (JMAP spec Session.username) — server-confirmed,
+  // unlike the client-side constructor username or the sending identity.
+  username?: string;
   apiUrl: string;
   downloadUrl: string;
   uploadUrl?: string;
@@ -432,6 +470,17 @@ function stripMessageIdBrackets(id: string): string {
   return id.trim().replace(/^<+/, '').replace(/>+$/, '').trim();
 }
 
+// Generate a Message-ID for outgoing mail (bare msg-id, no angle brackets, per
+// RFC 8621 §4.1.2.3). Without one the server synthesizes it from its OS
+// hostname, which leaks internal names (e.g. @ip-10-0-12-97.ec2.internal) into
+// headers — an anti-spam signal and an information disclosure. Use the sender's
+// domain instead, matching what receivers expect a Message-ID to look like.
+function generateMessageId(fromEmail: string): string {
+  const at = fromEmail.lastIndexOf('@');
+  const domain = at > 0 ? fromEmail.slice(at + 1) : 'localhost';
+  return `${Date.now().toString(36)}.${crypto.randomUUID()}@${domain}`;
+}
+
 /**
  * Build a CalendarEvent/query filter restricting results to the given
  * calendars. Stalwart implements the singular `inCalendar` condition (one
@@ -550,6 +599,43 @@ export class JMAPClient implements IJMAPClient {
     this.authHeader = `Bearer ${token}`;
   }
 
+  async getSomeEmails(emailsId: string[], accountId?: string): Promise<Email[]> {
+    try {
+      const targetAccountId = accountId || this.accountId;
+      if (!emailsId || emailsId.length === 0) {
+        return [];
+      }
+
+      const response = await this.request([
+        ["Email/get", {
+          accountId: targetAccountId,
+          ids: emailsId,
+          properties: [...EMAIL_LIST_PROPERTIES],
+        }, "0"],
+      ]);
+
+      const getResponse = response.methodResponses?.[0]?.[1];
+
+      if (response.methodResponses?.[0]?.[0] === "Email/get" && getResponse) {
+        const emails = (getResponse.list || []) as Email[];
+
+        emails.sort((a: Email, b: Email) =>
+          new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()
+        );
+
+        if (accountId && accountId !== this.accountId) {
+          namespaceMailboxIds(emails, accountId);
+        }
+
+        return emails;
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Failed to get specific emails:', error);
+      return [];
+    }
+  }
   /** Upgrade an existing basic-auth client to bearer-token auth (e.g. after TOTP token exchange). */
   upgradeToBearer(accessToken: string, onRefresh?: () => Promise<string | null>): void {
     this.authMode = 'bearer';
@@ -1087,16 +1173,27 @@ export class JMAPClient implements IJMAPClient {
     }
   }
 
-  async getEmails(mailboxId?: string, accountId?: string, limit: number = 50, position: number = 0, hasKeyword?: string, pinnedFirst?: boolean): Promise<{ emails: Email[], hasMore: boolean, total: number }> {
+  async getEmails(mailboxId?: string, accountId?: string, limit: number = 50, position: number = 0, hasKeyword?: string, pinnedFirst?: boolean, extraFilter?: Record<string, unknown>): Promise<{ emails: Email[], hasMore: boolean, total: number }> {
     try {
       const targetAccountId = accountId || this.accountId;
-      const filter: { inMailbox?: string; hasKeyword?: string } = {};
+      const simple: { inMailbox?: string; hasKeyword?: string } = {};
       if (mailboxId) {
-        filter.inMailbox = mailboxId;
+        simple.inMailbox = mailboxId;
       }
       if (hasKeyword) {
-        filter.hasKeyword = hasKeyword;
+        simple.hasKeyword = hasKeyword;
       }
+      // `extraFilter` is an arbitrary FilterCondition/FilterOperator ANDed
+      // into the view - the message-list category tabs' search contract.
+      const filter: Record<string, unknown> = extraFilter
+        ? {
+            operator: "AND",
+            conditions: [
+              ...(Object.keys(simple).length > 0 ? [simple] : []),
+              extraFilter,
+            ],
+          }
+        : simple;
       // Pinned-first uses the hasKeyword sort comparator (RFC 8621 §4.4.2);
       // every page of a view must use the same sort or pagination tears.
       const sort = pinnedFirst
@@ -1210,6 +1307,46 @@ export class JMAPClient implements IJMAPClient {
       return result;
     } catch (error) {
       console.error('Failed to get tag counts:', error);
+      return {};
+    }
+  }
+
+  /**
+   * Per-tab unread counts for message-list category tabs. One Email/query
+   * (limit 0, calculateTotal) per tab, batched in a single request. Each
+   * entry's `filter` is the tab's resolved FilterCondition/FilterOperator
+   * (null = no extra condition, i.e. all unread in the mailbox).
+   */
+  async getCategoryUnreadCounts(
+    mailboxId: string,
+    tabs: Array<{ id: string; filter: Record<string, unknown> | null }>,
+    accountId?: string,
+  ): Promise<Record<string, number>> {
+    if (tabs.length === 0) return {};
+    const targetAccountId = accountId || this.accountId;
+    try {
+      const methodCalls: JMAPMethodCall[] = tabs.map((tab, i) => {
+        const conditions: Record<string, unknown>[] = [
+          { inMailbox: mailboxId },
+          { notKeyword: "$seen" },
+        ];
+        if (tab.filter) conditions.push(tab.filter);
+        return ["Email/query", {
+          accountId: targetAccountId,
+          filter: { operator: "AND", conditions },
+          limit: 0,
+          calculateTotal: true,
+        }, `tab_${i}`];
+      });
+
+      const response = await this.request(methodCalls);
+      const result: Record<string, number> = {};
+      for (let i = 0; i < tabs.length; i++) {
+        result[tabs[i].id] = response.methodResponses?.[i]?.[1]?.total ?? 0;
+      }
+      return result;
+    } catch (error) {
+      console.error('Failed to get category tab counts:', error);
       return {};
     }
   }
@@ -1369,6 +1506,32 @@ export class JMAPClient implements IJMAPClient {
           },
         },
       }, "0"],
+    ]);
+  }
+
+  async removeKeyword(emailId: string, keyword: string, accountId?: string): Promise<void> {
+    await this.request([
+      ["Email/set", {
+        accountId: accountId || this.accountId,
+        update: {
+          [emailId]: {
+            [`keywords/${keyword}`]: null,
+          },
+        },
+      }, "0"],
+    ]);
+  }
+
+  /**
+   * Apply the same keyword PatchObject fragment to many messages in one
+   * Email/set. `patch` keys are `keywords/<name>` pointers with true (add)
+   * or null (remove) values - the category-tab move primitive.
+   */
+  async batchUpdateKeywords(emailIds: string[], patch: Record<string, boolean | null>, accountId?: string): Promise<void> {
+    if (emailIds.length === 0 || Object.keys(patch).length === 0) return;
+    const update = Object.fromEntries(emailIds.map(id => [id, { ...patch }]));
+    await this.request([
+      ["Email/set", { accountId: accountId || this.accountId, update }, "0"],
     ]);
   }
 
@@ -1885,6 +2048,13 @@ export class JMAPClient implements IJMAPClient {
       const total = queryResponse?.total || 0;
       const hasMore = computeHasMore(position, emails.length, total, limit);
 
+      // Mirror getEmails: emails fetched from a delegated/shared account carry
+      // bare owner mailbox ids; namespace them to `${ownerId}:${id}` so they line
+      // up with the namespaced ids the store holds for shared mailboxes. (#281 V3)
+      if (accountId && accountId !== this.accountId) {
+        namespaceMailboxIds(emails, accountId);
+      }
+
       return { emails, hasMore, total };
     } catch (error) {
       console.error('Search failed:', error);
@@ -1924,6 +2094,13 @@ export class JMAPClient implements IJMAPClient {
       );
       const total = queryResponse?.total || 0;
       const hasMore = computeHasMore(position, emails.length, total, limit);
+
+      // Namespace shared/delegated-account mailbox ids (see searchEmails). The
+      // cross-account views (All mail / Unread / Starred) browse via this method,
+      // so without it shared emails would carry bare owner ids there. (#281 V3)
+      if (accountId && accountId !== this.accountId) {
+        namespaceMailboxIds(emails, accountId);
+      }
 
       return { emails, hasMore, total };
     } catch (error) {
@@ -2430,6 +2607,7 @@ export class JMAPClient implements IJMAPClient {
       cc: cc?.length ? cc.map(parseRecipientString) : undefined,
       bcc: bcc?.length ? bcc.map(parseRecipientString) : undefined,
       subject,
+      messageId: [generateMessageId(fromEmail || this.username)],
       inReplyTo: normalizedInReplyTo?.length ? normalizedInReplyTo : undefined,
       references: normalizedReferences?.length ? normalizedReferences : undefined,
       keywords: { "$seen": true, "$draft": true },
@@ -2473,8 +2651,7 @@ export class JMAPClient implements IJMAPClient {
     // issues with servers that encrypt on append (e.g. Stalwart). See #188.
     const onSuccessUpdateEmail = {
       "#1": {
-        [`mailboxIds/${draftsMailbox.id}`]: null,
-        [`mailboxIds/${sentMailbox.id}`]: true,
+        ...mailboxIdsReplacement(sentMailbox.id),
         "keywords/$draft": null,
       },
     };
@@ -2748,8 +2925,7 @@ export class JMAPClient implements IJMAPClient {
         create: { "sub-1": { emailId: `#${emailId}`, identityId: finalIdentityId } },
         onSuccessUpdateEmail: {
           "#sub-1": {
-            [`mailboxIds/${draftsMailbox.id}`]: null,
-            [`mailboxIds/${sentMailbox.id}`]: true,
+            ...mailboxIdsReplacement(sentMailbox.id),
             "keywords/$draft": null,
           },
         },
@@ -2934,8 +3110,7 @@ export class JMAPClient implements IJMAPClient {
         create: { "sub-1": { emailId: `#${emailId}`, identityId } },
         onSuccessUpdateEmail: {
           "#sub-1": {
-            [`mailboxIds/${draftsMailbox.id}`]: null,
-            [`mailboxIds/${sentMailbox.id}`]: true,
+            ...mailboxIdsReplacement(sentMailbox.id),
             "keywords/$draft": null,
           },
         },
@@ -3089,8 +3264,7 @@ export class JMAPClient implements IJMAPClient {
         create: { "sub-1": { emailId: `#${emailId}`, identityId } },
         onSuccessUpdateEmail: {
           "#sub-1": {
-            [`mailboxIds/${draftsMailbox.id}`]: null,
-            [`mailboxIds/${sentMailbox.id}`]: true,
+            ...mailboxIdsReplacement(sentMailbox.id),
             "keywords/$draft": null,
           },
         },
@@ -3368,8 +3542,8 @@ export class JMAPClient implements IJMAPClient {
     return response.blob();
   }
 
-  async fetchBlobAsObjectUrl(blobId: string, name?: string, type?: string): Promise<string> {
-    const blob = await this.fetchBlob(blobId, name, type);
+  async fetchBlobAsObjectUrl(blobId: string, name?: string, type?: string, accountId?: string): Promise<string> {
+    const blob = await this.fetchBlob(blobId, name, type, accountId);
     return URL.createObjectURL(blob);
   }
 
@@ -3505,6 +3679,14 @@ export class JMAPClient implements IJMAPClient {
 
   getUsername(): string {
     return this.username || this.session?.accounts?.[this.accountId]?.name || '';
+  }
+
+  // Server-confirmed authenticated login from the JMAP Session object. Use
+  // this (not getUsername(), which echoes the constructor arg, nor the
+  // sending identity) to verify a slot's token resolved to the expected
+  // account.
+  getSessionUsername(): string | undefined {
+    return this.session?.username;
   }
 
   supportsEmailSubmission(): boolean {
@@ -4216,6 +4398,8 @@ export class JMAPClient implements IJMAPClient {
         create: {
           "new-contact": {
             ...contactData,
+            //  Stalwart stores the card without one if omitted (#644)
+            uid: contactData.uid || `urn:uuid:${crypto.randomUUID()}`,
             addressBookIds,
           }
         }
@@ -5648,8 +5832,8 @@ export class JMAPClient implements IJMAPClient {
     return created as FileNode;
   }
 
-  async downloadBlob(blobId: string, name?: string, type?: string): Promise<void> {
-    const blob = await this.fetchBlob(blobId, name, type);
+  async downloadBlob(blobId: string, name?: string, type?: string, accountId?: string): Promise<void> {
+    const blob = await this.fetchBlob(blobId, name, type, accountId);
     const blobUrl = URL.createObjectURL(blob);
 
     const a = document.createElement('a');
@@ -5662,6 +5846,7 @@ export class JMAPClient implements IJMAPClient {
   }
 
   private pollingInterval: NodeJS.Timeout | null = null;
+  private secondaryPollInterval: NodeJS.Timeout | null = null;
   private pollingStates: { [key: string]: string } = {};
   private sseAbortController: AbortController | null = null;
   private sseReconnectTimeout: NodeJS.Timeout | null = null;
@@ -5679,6 +5864,10 @@ export class JMAPClient implements IJMAPClient {
   };
 
   private static readonly POLLING_INTERVAL = 3_000;
+  // Shared/secondary accounts get no SSE push (Stalwart pushes the primary
+  // account only), so poll them on a slow cadence alongside SSE to keep their
+  // folder + unified/All-Mail counters from going stale between focus events.
+  private static readonly SECONDARY_POLL_INTERVAL = 20_000;
   private static readonly SSE_RECONNECT_DELAY = 3_000;
   private static readonly SSE_PING_TIMEOUT = 90_000; // 3x the 30s ping interval
 
@@ -5686,11 +5875,32 @@ export class JMAPClient implements IJMAPClient {
     const eventSourceUrl = this.getEventSourceUrl();
     if (eventSourceUrl) {
       this.connectSSE(eventSourceUrl);
+      // SSE covers the primary account only; keep shared accounts fresh too.
+      this.startSecondaryAccountPoll();
     } else {
+      // The fallback poll already covers every session account.
       this.startPollingFallback();
     }
     this.setupBrowserEventListeners();
     return true;
+  }
+
+  /**
+   * Slow poll of the session's shared/secondary accounts, run in parallel with
+   * SSE (which never reports them). Skipped when there are no shared accounts,
+   * and paused while the tab is hidden (visibilitychange forces a check on
+   * return). Reuses checkForStateChanges, which already reports per-account.
+   */
+  private startSecondaryAccountPoll(): void {
+    if (this.secondaryPollInterval) return;
+    const hasSecondary = this.pollAccountIds().some((id) => id !== this.accountId);
+    if (!hasSecondary) return;
+    // Prime the per-account baseline so the first tick doesn't false-fire.
+    void this.fetchCurrentStates();
+    this.secondaryPollInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void this.checkForStateChanges();
+    }, JMAPClient.SECONDARY_POLL_INTERVAL);
   }
 
   private connectSSE(templateUrl: string): void {
@@ -5819,12 +6029,30 @@ export class JMAPClient implements IJMAPClient {
     }, JMAPClient.POLLING_INTERVAL);
   }
 
+  /**
+   * Accounts whose Mailbox/Email state the poll should track. Stalwart's SSE
+   * only pushes StateChange for the primary account, never for delegated/shared
+   * (secondary) accounts, so their folder counters — and the unified/All-Mail
+   * badges that aggregate them — would otherwise never refresh from a background
+   * change. Polling every session account (primary + shared) closes that gap on
+   * the visibility/interval reconcile path. Mailbox/Email get callIds are tagged
+   * with the accountId (`mbx:<id>` / `eml:<id>`) so each account is compared
+   * independently. (#shared-counter-push)
+   */
+  private pollAccountIds(): string[] {
+    const ids = Object.keys(this.accounts || {});
+    return ids.length > 0 ? ids : [this.accountId];
+  }
+
   private buildStatePollingRequest(): { using: string[]; methodCalls: JMAPMethodCall[] } {
     const using = ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'];
-    const methodCalls: JMAPMethodCall[] = [
-      ['Mailbox/get', { accountId: this.accountId, ids: null, properties: ['id'] }, 'a'],
-      ['Email/get', { accountId: this.accountId, ids: [], properties: ['id'] }, 'b'],
-    ];
+    const methodCalls: JMAPMethodCall[] = [];
+    for (const acctId of this.pollAccountIds()) {
+      methodCalls.push(
+        ['Mailbox/get', { accountId: acctId, ids: null, properties: ['id'] }, `mbx:${acctId}`],
+        ['Email/get', { accountId: acctId, ids: [], properties: ['id'] }, `eml:${acctId}`],
+      );
+    }
 
     if (this.supportsCalendars()) {
       using.push('urn:ietf:params:jmap:calendars');
@@ -5845,6 +6073,16 @@ export class JMAPClient implements IJMAPClient {
     return { using, methodCalls };
   }
 
+  /** Map a polled method response back to its (accountId, stateKey). */
+  private resolvePolledState(method: string, callId: unknown): { accountId: string; stateKey: string } | null {
+    if (typeof callId === 'string') {
+      if (callId.startsWith('mbx:')) return { accountId: callId.slice(4), stateKey: 'Mailbox' };
+      if (callId.startsWith('eml:')) return { accountId: callId.slice(4), stateKey: 'Email' };
+    }
+    const stateKey = JMAPClient.STATE_TYPE_MAP[method];
+    return stateKey ? { accountId: this.accountId, stateKey } : null;
+  }
+
   private async fetchCurrentStates(): Promise<void> {
     if (this.isRateLimited()) {
       return;
@@ -5859,10 +6097,10 @@ export class JMAPClient implements IJMAPClient {
 
       if (response.ok) {
         const data = await response.json();
-        for (const [method, result] of data.methodResponses) {
-          const stateKey = JMAPClient.STATE_TYPE_MAP[method];
-          if (stateKey && result.state) {
-            this.pollingStates[stateKey] = result.state;
+        for (const [method, result, callId] of data.methodResponses) {
+          const resolved = this.resolvePolledState(method, callId);
+          if (resolved && result?.state) {
+            this.pollingStates[`${resolved.accountId}:${resolved.stateKey}`] = result.state;
           }
         }
       }
@@ -5885,25 +6123,24 @@ export class JMAPClient implements IJMAPClient {
 
       if (response.ok) {
         const data = await response.json();
-        const changes: { [key: string]: string } = {};
-        let hasChanges = false;
+        // Build a per-account changed map so a background change in a shared
+        // (secondary) account is reported under its own accountId — which
+        // handleStateChange treats as "some mailbox changed" and refetches the
+        // full (own + delegated) mailbox list from.
+        const changedByAccount: Record<string, Record<string, string>> = {};
 
-        for (const [method, result] of data.methodResponses) {
-          const stateKey = JMAPClient.STATE_TYPE_MAP[method];
-          if (stateKey && result.state) {
-            if (this.pollingStates[stateKey] && this.pollingStates[stateKey] !== result.state) {
-              changes[stateKey] = result.state;
-              hasChanges = true;
-            }
-            this.pollingStates[stateKey] = result.state;
+        for (const [method, result, callId] of data.methodResponses) {
+          const resolved = this.resolvePolledState(method, callId);
+          if (!resolved || !result?.state) continue;
+          const key = `${resolved.accountId}:${resolved.stateKey}`;
+          if (this.pollingStates[key] && this.pollingStates[key] !== result.state) {
+            (changedByAccount[resolved.accountId] ??= {})[resolved.stateKey] = result.state;
           }
+          this.pollingStates[key] = result.state;
         }
 
-        if (hasChanges && this.stateChangeCallback) {
-          this.stateChangeCallback({
-            '@type': 'StateChange',
-            changed: { [this.accountId]: changes },
-          });
+        if (Object.keys(changedByAccount).length > 0 && this.stateChangeCallback) {
+          this.stateChangeCallback({ '@type': 'StateChange', changed: changedByAccount });
         }
       }
     } catch {
@@ -5915,6 +6152,10 @@ export class JMAPClient implements IJMAPClient {
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
+    }
+    if (this.secondaryPollInterval) {
+      clearInterval(this.secondaryPollInterval);
+      this.secondaryPollInterval = null;
     }
     if (this.sseAbortController) {
       this.sseAbortController.abort();
@@ -6082,8 +6323,8 @@ export class JMAPClient implements IJMAPClient {
   // ── S/MIME raw-email helpers ─────────────────────────────────────
 
   /** Fetch blob content as an ArrayBuffer (for S/MIME byte processing). */
-  async fetchBlobArrayBuffer(blobId: string, name?: string, type?: string): Promise<ArrayBuffer> {
-    const url = this.getBlobDownloadUrl(blobId, name, type);
+  async fetchBlobArrayBuffer(blobId: string, name?: string, type?: string, accountId?: string): Promise<ArrayBuffer> {
+    const url = this.getBlobDownloadUrl(blobId, name, type, accountId);
     const response = await this.authenticatedFetch(url, {});
     if (!response.ok) {
       throw new Error(`Failed to fetch blob: ${response.status}`);
@@ -6154,7 +6395,7 @@ export class JMAPClient implements IJMAPClient {
   }
 
   /**
-   * Import a raw S/MIME message, move it to the Sent mailbox, and submit it.
+   * Import a raw S/MIME PGP/MIME message, move it to the Sent mailbox, and submit it.
    * Encapsulates the full import → update → submit flow.
    */
   async sendRawEmail(
@@ -6200,8 +6441,7 @@ export class JMAPClient implements IJMAPClient {
         ...(draftMailboxId ? {
           onSuccessUpdateEmail: {
             '#raw-submit': {
-              [`mailboxIds/${draftMailboxId}`]: null,
-              [`mailboxIds/${sentMailboxId}`]: true,
+              ...mailboxIdsReplacement(sentMailboxId),
               'keywords/$draft': null,
             },
           },
@@ -6241,6 +6481,86 @@ export class JMAPClient implements IJMAPClient {
     return delayedUntil
       ? { scheduled: true, emailId, emailSubmissionId, sendAt: serverSendAt, isSmime: true }
       : { scheduled: false, emailId, emailSubmissionId, isSmime: true };
+  }
+
+  /**
+   * Submit a raw email blob to the network via JMAP EmailSubmission without auto-archiving to Sent.
+   */
+  async submitRawEmail(
+    blob: Blob,
+    identityId: string,
+    delayedUntil?: string,
+    envelopeRecipients?: string[],
+  ): Promise<SendEmailResult> {
+    const mailboxes = await this.getMailboxes();
+    const draftsMailbox = mailboxes.find(mb => mb.role === 'drafts');
+    if (!draftsMailbox) {
+          throw new Error('Drafts mailbox not found');
+        }
+
+    const holdForSeconds = delayedUntil ? this.validateDelayedUntil(delayedUntil) : undefined;
+    
+    const file = new File([blob], 'message.eml', { type: 'message/rfc822' });
+    const { blobId } = await this.uploadBlob(file);
+
+    const identities = await this.getIdentities();
+    const identity = identities.find(item => item.id === identityId);
+    const envelope = createDelayedSubmissionEnvelope(identity?.email || this.username, holdForSeconds, envelopeRecipients);
+
+    //Temporarily import the raw email into Drafts to satisfy JMAP's requirement that an EmailSubmission references an existing Email. 
+    // The Email will be destroyed after submission.
+    const methodCalls: [string, Record<string, unknown>, string][] = [
+      ['Email/import', {
+        accountId: this.accountId,
+        emails: {
+          'temp-submit': {
+            blobId,
+            mailboxIds: { [draftsMailbox.id]: true },
+            keywords: { '$draft': true },
+          },
+        },
+      }, '0'],
+      ['EmailSubmission/set', {
+        accountId: this.getSubmissionAccountId(),
+        create: {
+          'raw-submit': {
+            emailId: '#temp-submit',
+            identityId,
+            ...(envelope ? { envelope } : {}),
+          },
+        },
+        //destroy the temporary email after submission to avoid leaving a draft behind.
+        onSuccessDestroyEmail: ['#raw-submit'],
+      }, '1'],
+    ];
+
+    const response = await this.request(methodCalls);
+    let emailSubmissionId: string | undefined;
+    let serverSendAt: string | undefined;
+
+    for (const [methodName, result] of response.methodResponses ?? []) {
+      if (methodName.endsWith('/error')) {
+        throw new Error((result as { description?: string }).description || `Failed: ${(result as { type?: string }).type}`);
+      }
+      const r = result as { notCreated?: Record<string, { description?: string; type?: string }> };
+      if (r.notCreated) {
+        const firstErr = Object.values(r.notCreated)[0];
+        throw new Error(firstErr?.description || firstErr?.type || 'Failed to submit raw email');
+      }
+      if (methodName === 'EmailSubmission/set') {
+        const created = (result as { created?: Record<string, { id?: string; sendAt?: string }> }).created?.['raw-submit'];
+        emailSubmissionId = created?.id;
+        serverSendAt = created?.sendAt;
+      }
+    }
+
+    if (delayedUntil && emailSubmissionId && !serverSendAt) {
+      serverSendAt = await this.getEmailSubmissionSendAt(emailSubmissionId);
+    }
+
+    return delayedUntil
+      ? { scheduled: true, emailSubmissionId, sendAt: serverSendAt, isSmime: true }
+      : { scheduled: false, emailSubmissionId, isSmime: true };
   }
 
   async getScheduledEmails(limit = 50, position = 0): Promise<{ emails: ScheduledEmail[]; hasMore: boolean; total: number; nextPosition: number }> {
@@ -6368,8 +6688,7 @@ export class JMAPClient implements IJMAPClient {
         ...(draftsMailbox && sentMailbox ? {
           onSuccessUpdateEmail: {
             '#replacement': {
-              [`mailboxIds/${draftsMailbox.id}`]: null,
-              [`mailboxIds/${sentMailbox.id}`]: true,
+              ...mailboxIdsReplacement(sentMailbox.id),
               'keywords/$draft': null,
             },
           },
@@ -6401,15 +6720,17 @@ export class JMAPClient implements IJMAPClient {
     return { scheduled: true, emailId, emailSubmissionId: replacementId, sendAt: finalSendAt };
   }
 
-  async restoreEmailToDraft(emailId: string, draftMailboxId: string, sentMailboxId?: string): Promise<void> {
+  // The third parameter is intentionally unused: this restores an undo-send /
+  // canceled-scheduled message to be a draft, so it should live in Drafts *only*.
+  // A full mailboxIds replacement (rather than mailboxIds/<id> pointer patches)
+  // both drops the Sent copy without needing its id and stays safe for numeric
+  // mailbox ids — see mailboxIdsReplacement().
+  async restoreEmailToDraft(emailId: string, draftMailboxId: string, _sentMailboxId?: string): Promise<void> {
     const update: Record<string, unknown> = {
-      [`mailboxIds/${draftMailboxId}`]: true,
+      ...mailboxIdsReplacement(draftMailboxId),
       'keywords/$draft': true,
       'keywords/$seen': true,
     };
-    if (sentMailboxId) {
-      update[`mailboxIds/${sentMailboxId}`] = null;
-    }
     const response = await this.request([
       ['Email/set', {
         accountId: this.accountId,

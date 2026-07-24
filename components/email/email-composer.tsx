@@ -14,6 +14,7 @@ import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components
 import { sanitizeSignatureHtml, sanitizeSignatureHtmlForDisplay, sanitizeEmailHtml, escapeHtml } from "@/lib/email-sanitization";
 import { buildReplySubject, buildForwardSubject } from "@/lib/subject-prefix";
 import { isFilePreviewable } from "@/lib/file-preview";
+import { isEditableEventTarget } from "@/lib/keyboard";
 import { buildQuotedHtmlBlock, serializeEditorContent } from "@/components/email/quoted-html";
 import { buildSignatureBlock } from "@/components/email/signature-block";
 import { emailHooks, contactHooks } from "@/lib/plugin-hooks";
@@ -30,7 +31,7 @@ import { useContactStore, getContactDisplayName, getContactPrimaryEmail } from "
 import { useTemplateStore } from "@/stores/template-store";
 import { SubAddressHelper } from "@/components/identity/sub-address-helper";
 import { generateSubAddress } from "@/lib/sub-addressing";
-import { substitutePlaceholders } from "@/lib/template-utils";
+import { substitutePlaceholders, spliceTemplateAboveSignature } from "@/lib/template-utils";
 import { TemplatePicker } from "@/components/templates/template-picker";
 import { TemplateForm } from "@/components/templates/template-form";
 import type { EmailTemplate } from "@/lib/template-types";
@@ -49,12 +50,15 @@ import {
   waitForPendingUploads,
   extractUserAuthoredText,
   type Recipient,
+  enrichChipsWithColorsAndIcons,
+  ICON_MAP,
 } from "@/lib/email-composer-utils";
 import { isValidEmail } from "@/lib/validation";
 import { RichTextEditor } from "@/components/email/rich-text-editor";
 import type { Editor } from "@tiptap/react";
 import { htmlToPlainText as htmlToPlainTextShared } from "@/lib/html-to-text";
 import { fileStorage } from "@/lib/plugin-storage";
+import { usePolicyStore } from "@/stores/policy-store";
 
 /**
  * Derives the text/plain alternative from the composer's HTML body, preserving
@@ -289,6 +293,9 @@ export function EmailComposer({
     ? multiAccountIdentities.groups
     : [];
   const primaryIdentity = activeIdentities[0] ?? null;
+
+  const { isFeatureEnabled } = usePolicyStore();
+  const templatesEnabled = isFeatureEnabled('templatesEnabled');
 
   // The signature identity used when embedding the signature into the initial
   // body for "above quote" mode. Mirrors the signatureIdentity derivation
@@ -822,6 +829,26 @@ export function EmailComposer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composerClient, plainTextMode, mode]);
 
+    const processEnrichment = async (
+      recipients: Recipient[],
+      setRecipients: (items: Recipient[]) => void
+    ) => {
+      const hasUnenriched = recipients.some((r) => !r.extra?.enriched);
+      if (!hasUnenriched) return;
+
+        const newChips = await enrichChipsWithColorsAndIcons(recipients);
+        const fullyEnriched = newChips.map((chip) => ({
+          ...chip,
+          extra: { ...chip.extra, enriched: true },
+        }));
+        setRecipients(fullyEnriched);
+    };
+
+
+    useEffect(() => { processEnrichment(to, setTo); }, [to]);
+    useEffect(() => { processEnrichment(cc, setCc); }, [cc]);
+    useEffect(() => { processEnrichment(bcc, setBcc); }, [bcc]);
+
   const composerSignatureHtml = signatureIdentity?.htmlSignature
     ? `<div>${sanitizeSignatureHtmlForDisplay(signatureIdentity.htmlSignature)}</div>`
     : signatureIdentity?.textSignature
@@ -936,7 +963,10 @@ export function EmailComposer({
     }
   }, [plainTextMode]);
 
-  const handleMoveChip = useCallback((recipient: Recipient, fromField: 'to' | 'cc' | 'bcc', toField: 'to' | 'cc' | 'bcc') => {
+  // Move a chip from one recipient field to another. `toIndex`, when given,
+  // inserts at that position in the destination (drag-and-drop reordering,
+  // #593); omitted, it appends (e.g. dropping onto a hidden Cc/Bcc button).
+  const handleMoveChip = useCallback((recipient: Recipient, fromField: 'to' | 'cc' | 'bcc', toField: 'to' | 'cc' | 'bcc', toIndex?: number) => {
     if (fromField === toField) return;
     const setters = { to: setTo, cc: setCc, bcc: setBcc };
     const groupKey = (r: Recipient) => r.group ? r.group.members.map(m => m.email.toLowerCase()).join(',') : '';
@@ -946,7 +976,13 @@ export function EmailComposer({
       const idx = prev.findIndex(r => sameRecipient(r, recipient));
       return idx === -1 ? prev : prev.filter((_, i) => i !== idx);
     });
-    setters[toField](prev => prev.some(r => sameRecipient(r, recipient)) ? prev : [...prev, recipient]);
+    setters[toField](prev => {
+      if (prev.some(r => sameRecipient(r, recipient))) return prev;
+      const at = toIndex == null ? prev.length : Math.max(0, Math.min(toIndex, prev.length));
+      const next = [...prev];
+      next.splice(at, 0, recipient);
+      return next;
+    });
     if (toField === 'cc') setShowCc(true);
     if (toField === 'bcc') setShowBcc(true);
   }, [setTo, setCc, setBcc, setShowCc, setShowBcc]);
@@ -1079,13 +1115,22 @@ export function EmailComposer({
       : template.body;
 
     // In plain text mode, use template body as-is; otherwise convert to HTML
-    const bodyContent = plainTextMode
+    const bodyContent = plainTextMode || template.isHTML
       ? filledBody
       : `<p>${filledBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')}</p>`;
 
     if (mode === 'compose') {
       setSubject(filledSubject);
-      setBody(bodyContent);
+      // Compose bodies carry the embedded signature (see
+      // shouldEmbedSignatureInNewMail) and the send path assumes it stays
+      // there, so replace only the message content, not the signature block.
+      if (plainTextMode) {
+        setBody(shouldEmbedSignatureInNewMail
+          ? appendPlainTextSignature(bodyContent, signatureIdentity, { separator: signatureSeparatorEnabled })
+          : bodyContent);
+      } else {
+        setBody((prev) => spliceTemplateAboveSignature(prev, bodyContent));
+      }
       if (template.defaultRecipients?.to?.length) {
         setTo(template.defaultRecipients.to.map(parseRecipient));
       }
@@ -1098,7 +1143,30 @@ export function EmailComposer({
         setShowBcc(true);
       }
     } else {
-      setBody((prev) => bodyContent + (plainTextMode ? '\n' : '') + prev);
+      // Reply/forward: insert the template at the caret so it lands after any
+      // text the user has already typed, instead of always prepending it (#539).
+      if (plainTextMode) {
+        const textarea = bodyRef.current;
+        if (textarea) {
+          const start = textarea.selectionStart ?? textarea.value.length;
+          const end = textarea.selectionEnd ?? start;
+          setBody((prev) => prev.slice(0, start) + bodyContent + prev.slice(end));
+          // Restore the caret just past the inserted text once React re-renders.
+          requestAnimationFrame(() => {
+            const caret = start + bodyContent.length;
+            textarea.focus();
+            textarea.setSelectionRange(caret, caret);
+          });
+        } else {
+          setBody((prev) => bodyContent + '\n' + prev);
+        }
+      } else if (editorRef.current) {
+        // insertContent lands at the editor's current selection; onUpdate
+        // propagates the resulting HTML back through onChange → setBody.
+        editorRef.current.chain().focus().insertContent(bodyContent).run();
+      } else {
+        setBody((prev) => bodyContent + prev);
+      }
     }
 
     if (template.identityId) {
@@ -1106,14 +1174,14 @@ export function EmailComposer({
     }
 
     setShowTemplatePicker(false);
-  }, [mode, plainTextMode]);
+  }, [mode, plainTextMode, shouldEmbedSignatureInNewMail, signatureIdentity, signatureSeparatorEnabled]);
 
   useEffect(() => {
     const handleTemplateKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-      if (target?.getAttribute('contenteditable') === 'true') return;
+      // composedPath-based check so editing inside the QuotedHtml shadow
+      // island doesn't trigger the picker (#654).
+      if (isEditableEventTarget(e)) return;
+      if (!templatesEnabled) return;
       if (e.key === 't' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         setShowTemplatePicker(true);
@@ -1121,7 +1189,7 @@ export function EmailComposer({
     };
     window.addEventListener('keydown', handleTemplateKey);
     return () => window.removeEventListener('keydown', handleTemplateKey);
-  }, []);
+  }, [templatesEnabled]);
 
   const addFiles = useCallback(async (files: File[]) => {
     if (!client || files.length === 0) return;
@@ -2041,7 +2109,7 @@ export function EmailComposer({
   };
 
   return (
-    <div ref={composerRootRef} className={cn("flex h-full bg-background", className)}>
+    <div ref={composerRootRef} data-testid="email-composer" className={cn("flex h-full bg-background", className)}>
       <PluginSlot
         name="composer-sidebar"
         className="hidden md:flex shrink-0 h-full overflow-hidden border-e border-border"
@@ -2071,7 +2139,7 @@ export function EmailComposer({
           <Button variant="ghost" size="icon" onClick={handleClose} className="h-9 w-9 md:h-8 md:w-8">
             <X className="w-5 h-5 md:w-4 md:h-4" />
           </Button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" data-testid="composer-save-status" data-status={saveStatus}>
             <h3 className="font-semibold text-base">{t('new_message')}</h3>
             {saveStatus === 'saving' && (
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -2099,6 +2167,7 @@ export function EmailComposer({
           disabled={!canSend || isSending}
           title={getSendTooltip()}
           size="sm"
+          data-testid="composer-send"
           className="md:hidden h-9 px-4"
         >
           <Send className="w-4 h-4 me-1.5" />
@@ -2133,6 +2202,7 @@ export function EmailComposer({
                 </div>
               ) : identities.length > 1 ? (
                 <select
+                  data-testid="composer-from"
                   value={selectedIdentityId || primaryIdentity?.id || ''}
                   onChange={(e) => setSelectedIdentityId(e.target.value)}
                   className="flex-1 bg-transparent text-sm text-foreground outline-none cursor-pointer hover:text-muted-foreground transition-colors min-w-0 truncate"
@@ -2145,7 +2215,7 @@ export function EmailComposer({
                               ? generateSubAddress(identity.email, subAddressTag, subAddressDelimiter)
                               : identity.email;
                             return (
-                              <option key={identity.id} value={identity.id}>
+                              <option key={identity.id} value={identity.id} dir="ltr">
                                 {identity.name ? `${identity.name} <${displayEmail}>` : displayEmail}
                               </option>
                             );
@@ -2157,24 +2227,24 @@ export function EmailComposer({
                           ? generateSubAddress(identity.email, subAddressTag, subAddressDelimiter)
                           : identity.email;
                         return (
-                          <option key={identity.id} value={identity.id}>
+                          <option key={identity.id} value={identity.id} dir="ltr">
                             {identity.name ? `${identity.name} <${displayEmail}>` : displayEmail}
                           </option>
                         );
                       })}
                 </select>
               ) : (
-                <span className="text-sm text-foreground flex-1 truncate">
+                <span data-testid="composer-from" className="text-sm text-foreground flex-1 truncate">
                   {subAddressTag ? (
                     <span className="font-mono">
                       {generateSubAddress(primaryIdentity?.email || '', subAddressTag, subAddressDelimiter)}
                     </span>
                   ) : (
-                    <>
+                    <bdi>
                       {primaryIdentity?.name
                         ? `${primaryIdentity.name} <${primaryIdentity.email}>`
                         : primaryIdentity?.email || ''}
-                    </>
+                    </bdi>
                   )}
                 </span>
               )}
@@ -2227,7 +2297,7 @@ export function EmailComposer({
           </div>
 
           {/* To field */}
-          <div className={cn("flex items-center gap-2 px-4 py-2.5 border-b border-border/50 relative", shakeField === 'to' && "animate-shake")}>
+          <div data-testid="composer-to" className={cn("flex items-center gap-2 px-4 py-2.5 border-b border-border/50 relative", shakeField === 'to' && "animate-shake")}>
             <span className="text-sm text-muted-foreground w-12 md:w-16 shrink-0">{t('to')}:</span>
             <RecipientChipInput
               chips={to}
@@ -2372,6 +2442,7 @@ export function EmailComposer({
             <span className="text-sm text-muted-foreground w-12 md:w-16 shrink-0">{t('subject_label')}</span>
             <Input
               ref={subjectInputRef}
+              data-testid="composer-subject"
               type="text"
               placeholder={t('subject_placeholder')}
               value={subject}
@@ -2541,24 +2612,26 @@ export function EmailComposer({
             >
               <Paperclip className="w-4 h-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowTemplatePicker(true)}
-              title={t('use_template')}
-              className="h-9 w-9"
-            >
-              <FileText className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowSaveAsTemplate(true)}
-              title={t('save_as_template')}
-              className="h-9 w-9"
-            >
-              <BookmarkPlus className="w-4 h-4" />
-            </Button>
+            {templatesEnabled && <>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowTemplatePicker(true)}
+                title={t('use_template')}
+                className="h-9 w-9"
+              >
+                <FileText className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowSaveAsTemplate(true)}
+                title={t('save_as_template')}
+                className="h-9 w-9"
+              >
+                <BookmarkPlus className="w-4 h-4" />
+              </Button>
+            </>}
             {/* Sign/encrypt controls are contributed by crypto plugins via the
                 composer-toolbar slot (rendered below). */}
 
@@ -2594,6 +2667,7 @@ export function EmailComposer({
                   onClick={() => handleSend()}
                   disabled={!canSend || isSending}
                   title={getSendTooltip()}
+                  data-testid="composer-send"
                   className="rounded-e-none border-e border-primary-foreground/20"
                 >
                   <Send className="w-4 h-4 me-2" />
@@ -2613,7 +2687,7 @@ export function EmailComposer({
                 {showSendMenu && (
                   <div
                     role="menu"
-                    className="absolute right-0 bottom-full z-50 mb-2 min-w-44 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+                    className="absolute end-0 bottom-full z-50 mb-2 min-w-44 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg"
                   >
                     <button
                       type="button"
@@ -2632,6 +2706,7 @@ export function EmailComposer({
                 onClick={() => handleSend()}
                 disabled={!canSend || isSending}
                 title={getSendTooltip()}
+                data-testid="composer-send"
                 className="hidden md:inline-flex"
               >
                 <Send className="w-4 h-4 me-2" />
@@ -2754,7 +2829,7 @@ export function EmailComposer({
               </Button>
               <Button onClick={handleSaveDraftAndClose}>
                 <Save className="w-4 h-4 me-2" />
-                {t('save_draft')}
+                {tCommon('save')}
               </Button>
             </div>
           </div>
@@ -2895,7 +2970,7 @@ function RecipientChipInput({
   validationError?: boolean;
   validationMessage?: string;
   onTab?: () => void;
-  onMoveChip: (recipient: Recipient, fromField: 'to' | 'cc' | 'bcc', toField: 'to' | 'cc' | 'bcc') => void;
+  onMoveChip: (recipient: Recipient, fromField: 'to' | 'cc' | 'bcc', toField: 'to' | 'cc' | 'bcc', toIndex?: number) => void;
 }) {
   const t = useTranslations('email_composer');
   const tCommon = useTranslations('common');
@@ -2904,6 +2979,9 @@ function RecipientChipInput({
   const [editValue, setEditValue] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  // Gap (0..chips.length) a dragged chip would drop into; drives the insertion
+  // caret and positional drop for reordering (#593). null when not dragging.
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
 
   // Focus edit input when editing starts
@@ -3060,27 +3138,86 @@ function RecipientChipInput({
     onAutoBlur(e, field);
   };
 
+  const isChipDrag = (e: React.DragEvent) =>
+    e.dataTransfer.types.includes('application/x-recipient-chip');
+
+  // Dragging over empty container space (past the last chip / over the input)
+  // targets the end of the list.
   const handleContainerDragOver = (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes('application/x-recipient-chip')) return;
+    if (!isChipDrag(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setIsDragOver(true);
+    setDropIndex(chips.length);
   };
 
   const handleContainerDragLeave = (e: React.DragEvent) => {
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setIsDragOver(false);
+      setDropIndex(null);
+    }
+  };
+
+  // Dragging over a chip picks the gap before or after it based on which half
+  // the pointer is in (mirrored for RTL). stopPropagation keeps the container
+  // handler from overriding this finer target.
+  const handleChipDragOver = (e: React.DragEvent, index: number) => {
+    if (!isChipDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rtl = typeof window !== 'undefined' &&
+      getComputedStyle(e.currentTarget as Element).direction === 'rtl';
+    const past = rtl
+      ? e.clientX < rect.left + rect.width / 2
+      : e.clientX > rect.left + rect.width / 2;
+    setIsDragOver(true);
+    setDropIndex(past ? index + 1 : index);
+  };
+
+  // Insert the dragged chip at `target`. Same-field is a local reorder;
+  // cross-field routes through onMoveChip with the destination index (#593).
+  const performDrop = (e: React.DragEvent, target: number) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    setDropIndex(null);
+    setDraggingIndex(null);
+    const raw = e.dataTransfer.getData('application/x-recipient-chip');
+    if (!raw) return;
+    let payload: { recipient: Recipient; fromField: 'to' | 'cc' | 'bcc'; fromIndex?: number };
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const { recipient, fromField, fromIndex } = payload;
+    const to = Math.max(0, Math.min(target, chips.length));
+
+    if (fromField === field) {
+      const from = typeof fromIndex === 'number'
+        ? fromIndex
+        : chips.findIndex(c => c.email === recipient.email && (c.name ?? '') === (recipient.name ?? ''));
+      if (from < 0 || from >= chips.length) return;
+      // Removing the source before `to` shifts the target left by one.
+      const insertAt = to > from ? to - 1 : to;
+      if (insertAt === from) return; // dropped onto its own position
+      const next = [...chips];
+      const [moved] = next.splice(from, 1);
+      next.splice(insertAt, 0, moved);
+      onChipsChange(next);
+    } else {
+      onMoveChip(recipient, fromField, field, to);
     }
   };
 
   const handleContainerDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    const raw = e.dataTransfer.getData('application/x-recipient-chip');
-    if (!raw) return;
-    const { recipient, fromField } = JSON.parse(raw) as { recipient: Recipient; fromField: 'to' | 'cc' | 'bcc' };
-    if (fromField === field) return;
-    onMoveChip(recipient, fromField, field);
+    performDrop(e, dropIndex ?? chips.length);
+  };
+  const colorStyles: Record<'success' | 'destructive' | 'warning', string> = {
+    success: "bg-success/15 text-secondary-foreground hover:bg-success/30 !border-success",
+    destructive: "bg-destructive/15 text-secondary-foreground hover:bg-destructive/30 !border-destructive",
+    warning: "bg-warning/15 text-secondary-foreground hover:bg-warning/30 !border-warning",
   };
 
   return (
@@ -3099,30 +3236,60 @@ function RecipientChipInput({
         {chips.map((chip, i) => {
           const isEditing = editingChip?.index === i;
           const chipDisplay = formatChipDisplay(chip);
+          let IconComponent = null;
+          if(chip.extra?.icon){
+             IconComponent = ICON_MAP[chip.extra?.icon];
+          }
+          const customColor = chip.extra?.color;
+
           return (
+            <React.Fragment key={`${chip.email}-${i}`}>
+            {dropIndex === i && (
+              <span
+                aria-hidden
+                data-testid="recipient-drop-caret"
+                className="w-0.5 self-stretch min-h-[20px] rounded-full bg-primary pointer-events-none"
+              />
+            )}
             <span
-              key={`${chip.email}-${i}`}
               draggable={!isEditing}
               onDragStart={(e) => {
                 e.stopPropagation();
                 e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('application/x-recipient-chip', JSON.stringify({ recipient: chip, fromField: field }));
+                e.dataTransfer.setData('application/x-recipient-chip', JSON.stringify({ recipient: chip, fromField: field, fromIndex: i }));
                 // Show the address while dragging, matching the email-list drag preview.
                 const dragPreview = createChipDragPreview(chip.group ? chipDisplay : chip.email);
                 e.dataTransfer.setDragImage(dragPreview, 0, 0);
                 requestAnimationFrame(() => dragPreview.remove());
                 setDraggingIndex(i);
               }}
-              onDragEnd={() => setDraggingIndex(null)}
+              onDragEnd={() => { setDraggingIndex(null); setDropIndex(null); }}
+              onDragOver={(e) => handleChipDragOver(e, i)}
+              onDrop={(e) => { e.stopPropagation(); performDrop(e, dropIndex ?? i); }}
               className={cn(
                 "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm border border-border transition-colors",
                 isEditing
                   ? "bg-background ring-1 ring-ring"
-                  : "bg-secondary text-secondary-foreground hover:bg-accent cursor-grab active:cursor-grabbing",
+                  : ( customColor && colorStyles[customColor]
+                      ? `${colorStyles[customColor]} cursor-grab active:cursor-grabbing`
+                      :  "bg-secondary text-secondary-foreground hover:bg-accent cursor-grab active:cursor-grabbing"),
                 !isEditing && draggingIndex === i && "opacity-50"
               )}
               onContextMenu={isEditing ? undefined : (e) => handleContextMenu(e, i, chip)}
             >
+              {IconComponent ? (
+                                <IconComponent
+                   className={cn(
+                     "w-4 h-4",
+                     customColor === "success"
+                       ? "text-success"
+                       : customColor === "warning"
+                         ? "text-warning"
+                         : "text-destructive"
+                   )}
+                 />
+              ) : null}
+
               {isEditing ? (
                 <input
                   ref={editInputRef}
@@ -3179,8 +3346,16 @@ function RecipientChipInput({
                 )}
               </button>
             </span>
+            </React.Fragment>
           );
         })}
+        {dropIndex === chips.length && chips.length > 0 && (
+          <span
+            aria-hidden
+            data-testid="recipient-drop-caret"
+            className="w-0.5 self-stretch min-h-[20px] rounded-full bg-primary pointer-events-none"
+          />
+        )}
         {!editingChip && (
           <input
             ref={inputRef}

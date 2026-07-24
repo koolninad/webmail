@@ -64,6 +64,7 @@
     }
   },
   "sidebar": {
+    "unified_mailbox": "Zjednotená schránka",
     "close": "Zavrieť",
     "compose": "Napísať",
     "compose_hint": "Napísať (c)",
@@ -137,7 +138,9 @@
     "scheduled": "Naplánované",
     "unified_all_unread": "Všetky neprečítané",
     "unified_all_starred": "Všetky s hviezdičkou",
-    "unified_all_mail": "Všetka pošta"
+    "unified_all_mail": "Všetka pošta",
+    "remove_account": "Odstrániť účet",
+    "remove_account_confirm": "Odstrániť {account} z tohto zariadenia? Neskôr ho môžete znova pridať."
   },
   "protocol_handlers": {
     "title": "Predvolené aplikácie",
@@ -274,6 +277,8 @@
     "no_subject": "(Bez predmetu)",
     "no_body_content": "(Obsah správy nie je dostupný)",
     "no_preview_available": "Náhľad nie je dostupný",
+    "show_quoted_text": "Zobraziť citovaný text",
+    "hide_quoted_text": "Skryť citovaný text",
     "loading_email": "Načítavanie e-mailu...",
     "loading": "Načítavanie...",
     "reply": "Odpovedať",
@@ -650,7 +655,6 @@
     "continue_draft": "Pokračovať v koncepte",
     "close_draft_title": "Uložiť alebo zahoditť koncept?",
     "close_draft_message": "Máte neuložené zmeny. Chcete ich uložiť ako koncept alebo zahoditť?",
-    "save_draft": "Uložiť koncept",
     "smime_sign_on": "Podpisovanie S/MIME zapnuté",
     "smime_sign_off": "Zapnúť podpisovanie S/MIME",
     "smime_encrypt_on": "Šifrovanie S/MIME zapnuté",
@@ -927,14 +931,16 @@
       "unified_mailbox": {
         "label": "Zjednotená schránka",
         "description": "Zobrazovať zlúčené priečinky (Doručené, Odoslané atd.) zo všetkých pripojených účtov",
+        "cross_account": {
+          "label": "Naprieč všetkými účtami",
+          "description": "Zlúčiť zjednotenú schránku naprieč všetkými pripojenými účtami namiesto zotrvania v aktívnom účte."
+        },
         "include_group": {
           "label": "Zahrnúť skupinové schránky",
           "description": "Zahrnúť do zjednoteného zobrazenia aj zdieľané/skupinové schránky."
         }
       },
       "all_mail": {
-        "label": "Všetka pošta",
-        "description": "Zobraziť položku \"Všetka pošta\" nad priečinkami.",
         "folders_label": "Priečinky vo Všetkej pošte",
         "folders_description": "Vyberte, ktoré priečinky sa spoja do zobrazenia Všetka pošta.",
         "account_hint": "Platí pre {account}.",
@@ -951,6 +957,10 @@
       "show_folder_total_count": {
         "label": "Zobraziť celkový počet správ",
         "description": "Zobraziť celkový počet správ vedľa priečinkov a štítkov spolu s počtom neprečítaných."
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "Pro rozhranie (experimentálne)",
@@ -1112,6 +1122,13 @@
         "trash_and_read": "Presunúť do Koša a označiť ako prečítané",
         "permanent": "Trvalo odstrániť",
         "warning": "E-maily budú trvalo odstránené a nedajú sa obnoviť."
+      },
+      "message_spacing": {
+        "label": "Odsadenie správy",
+        "description": "Odsadenie okolo tela správy pri čítaní",
+        "auto": "Automaticky (odporúčané)",
+        "always": "Vždy pridať odsadenie",
+        "edge": "Od okraja po okraj"
       },
       "archive_mode": {
         "label": "Archivovať do",
@@ -1532,7 +1549,10 @@
         "subject_placeholder": "Mimo kancelárie",
         "body_label": "Telo správy",
         "body_description": "Obsah správy v prostom texte",
-        "body_placeholder": "Ďakujem za vašu správu. Momentálne som mimo kancelárie a odpoviem po svojom návrate."
+        "body_placeholder": "Ďakujem za vašu správu. Momentálne som mimo kancelárie a odpoviem po svojom návrate.",
+        "html_label": "Formátovaná správa (HTML)",
+        "html_description": "Pridajte formátovanú verziu s odkazmi a štýlom. Príjemcovia, ktorých poštový klient ju nedokáže zobraziť, uvidia obyčajný text vyššie.",
+        "html_placeholder": "Napíšte formátovanú odpoveď o neprítomnosti…"
       },
       "preview": {
         "title": "Náhľad",
@@ -1564,6 +1584,8 @@
       "role_none": "Žiadna",
       "create_folder": "Vytvoriť priečinok",
       "create_subfolder": "Vytvoriť podpriečinok",
+      "reorder": "Potiahnutím zmeníte poradie",
+      "reorder_error": "Nepodarilo sa zmeniť poradie priečinkov",
       "subfolder_of": "V priečinku {name}",
       "subfolder_name": "Názov podpriečinka",
       "new_folder_name": "Názov priečinka",
@@ -1628,6 +1650,11 @@
         "label": "Klávesové skratky",
         "description": "Zobraziť dostupné klávesové skratky",
         "button": "Zobraziť skratky"
+      },
+      "refresh_cache": {
+        "label": "Obnoviť uložené údaje",
+        "description": "Znova načíta kontakty, kalendáre a priečinky zo servera. Zachová vaše účty a prihlásenia — opraví zastarané alebo nesprávne zobrazenie bez odhlásenia.",
+        "button": "Obnoviť"
       },
       "reset_settings": {
         "label": "Resetovať nastavenia",

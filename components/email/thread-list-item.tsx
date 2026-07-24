@@ -2,7 +2,7 @@
 
 import React, { useCallback } from "react";
 import { formatDate, formatDateTime, stripInvisibleLeading } from "@/lib/utils";
-import { Email, ThreadGroup, ALL_MAIL_MAILBOX_ID } from "@/lib/jmap/types";
+import { Email, ThreadGroup } from "@/lib/jmap/types";
 import { cn } from "@/lib/utils";
 import { SelectableAvatar } from "@/components/email/selectable-avatar";
 import { Paperclip, Star, Pin, Circle, ChevronRight, ChevronDown, Loader2, MessageSquare, CheckSquare, Square, Reply, Forward, CalendarClock, Folder } from "lucide-react";
@@ -97,7 +97,7 @@ const SingleEmailItem = React.forwardRef<HTMLDivElement, SingleEmailItemProps>(
     const showAvatarsInJunk = useSettingsStore((state) => state.showAvatarsInJunk);
     const hideJunkAvatarImages = currentMailboxRole === 'junk' && !showAvatarsInJunk;
     // Show the originating folder in the aggregate "All …" views.
-    const showSourceFolder = (isUnifiedView || selectedMailbox === ALL_MAIL_MAILBOX_ID) && !!email.sourceFolder;
+    const showSourceFolder = isUnifiedView && !!email.sourceFolder;
     const getAccountById = useAccountStore((state) => state.getAccountById);
     const accountColor = email.accountId ? getAccountById(email.accountId)?.avatarColor : undefined;
     const isChecked = selectedEmailIds.has(email.id);
@@ -166,6 +166,10 @@ const SingleEmailItem = React.forwardRef<HTMLDivElement, SingleEmailItemProps>(
         ref={ref}
         {...dragHandlers}
         {...longPressHandlers}
+        data-testid="email-list-item"
+        data-email-id={email.id}
+        data-subject={email.subject || ''}
+        data-unread={isUnread ? 'true' : 'false'}
         className={cn(
           "relative group cursor-pointer select-none transition-shadow duration-200 border-b border-border overflow-hidden",
           resolvedColorTag ? resolvedColorTag : (
@@ -459,7 +463,7 @@ export const ThreadListItem = React.forwardRef<HTMLDivElement, ThreadListItemPro
       : null;
 
     const { selectedMailbox, mailboxes, selectedEmailIds, toggleEmailSelection, selectRangeEmails, clearSelection, isUnifiedView, unifiedRole } = useEmailStore();
-    const showSourceFolder = (isUnifiedView || selectedMailbox === ALL_MAIL_MAILBOX_ID) && !!latestEmail.sourceFolder;
+    const showSourceFolder = isUnifiedView && !!latestEmail.sourceFolder;
     const getAccountById = useAccountStore((state) => state.getAccountById);
     const threadAccountColor = latestEmail.accountId ? getAccountById(latestEmail.accountId)?.avatarColor : undefined;
     // In Sent/Drafts folders, show recipient instead of sender (which is always
@@ -660,7 +664,7 @@ export const ThreadListItem = React.forwardRef<HTMLDivElement, ThreadListItemPro
                   onToggle={toggleThreadSelection}
                   selectLabel={tBatch('select')}
                 />
-                {!isMobile && !isFocusedMailLayout && (
+                {!isMobile && (
                   <button
                     data-expand-toggle
                     onClick={(e) => {
@@ -892,7 +896,7 @@ export const ThreadListItem = React.forwardRef<HTMLDivElement, ThreadListItemPro
           )}
         </div>
 
-        {isExpanded && !isMobile && !isFocusedMailLayout && (
+        {isExpanded && !isMobile && (
           <div className="bg-muted/20 animate-in slide-in-from-top-2 duration-200">
             {isLoading ? (
               <div className="py-4 flex items-center justify-center text-sm text-muted-foreground">

@@ -5,8 +5,9 @@ import DOMPurify from "dompurify";
 import { Email, ContactCard, Mailbox } from "@/lib/jmap/types";
 import { emailExportFilename, attachmentDownloadFilename, attachmentsBundleFilename, DEFAULT_EMAIL_TEMPLATE, DEFAULT_ATTACHMENT_TEMPLATE } from "@/lib/download-filename";
 import { EML_IMPORT_ACCEPT, expandImportableEmails } from "@/lib/eml-import";
-import { EMAIL_IFRAME_SANITIZE_CONFIG, blockExternalResourcesOnNode, collapseBlockedImageContainers, escapeHtml, plainTextToSafeHtml, sanitizeEmailHtml, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
+import { EMAIL_IFRAME_SANITIZE_CONFIG, applyNewTabToAnchor, blockExternalResourcesOnNode, collapseBlockedImageContainers, escapeHtml, plainTextToSafeHtml, sanitizeEmailHtml, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
 import { hasMeaningfulHtmlBody } from "@/lib/signature-utils";
+import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collapse";
 import { withBasePath } from "@/lib/browser-navigation";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
@@ -560,6 +561,8 @@ export function ContactSidebarPanel({
 interface DraggableAttachmentChipProps {
   attachment: EffectiveAttachment;
   client: IJMAPClient | null;
+  /** Owner accountId for the blob when it lives in a delegated/shared account. */
+  accountId?: string;
   enabled: boolean;
   downloadName?: string;
   children: (dragProps: {
@@ -570,14 +573,14 @@ interface DraggableAttachmentChipProps {
   }) => React.ReactNode;
 }
 
-function DraggableAttachmentChip({ attachment, client, enabled, downloadName, children }: DraggableAttachmentChipProps) {
+function DraggableAttachmentChip({ attachment, client, accountId, enabled, downloadName, children }: DraggableAttachmentChipProps) {
   const source = useMemo<AttachmentDragSource>(() => ({
     name: downloadName || attachment.name || 'download',
     type: attachment.type || 'application/octet-stream',
     getBlobUrl: async () => {
       if (attachment.blobId && client) {
         try {
-          return await client.fetchBlobAsObjectUrl(attachment.blobId, attachment.name || undefined, attachment.type);
+          return await client.fetchBlobAsObjectUrl(attachment.blobId, attachment.name || undefined, attachment.type, accountId);
         } catch {
           return null;
         }
@@ -595,7 +598,7 @@ function DraggableAttachmentChip({ attachment, client, enabled, downloadName, ch
       }
       return null;
     },
-  }), [attachment, client, downloadName]);
+  }), [attachment, client, accountId, downloadName]);
   const drag = useAttachmentDrag(source, enabled);
   return <>{children(drag)}</>;
 }
@@ -652,6 +655,7 @@ export function EmailViewer({
   const tDemoWelcome = useTranslations('demo_welcome');
   const tWelcome = useTranslations('welcome');
   const externalContentPolicy = useSettingsStore((state) => state.externalContentPolicy);
+  const messageSpacing = useSettingsStore((state) => state.messageSpacing);
   const mailAttachmentAction = useSettingsStore((state) => state.mailAttachmentAction);
   const attachmentPosition = useSettingsStore((state) => state.attachmentPosition);
   const addTrustedSender = useSettingsStore((state) => state.addTrustedSender);
@@ -714,6 +718,18 @@ export function EmailViewer({
   const { tabletListVisible } = useUIStore();
   const { identities, client, isDemoMode, activeAccountId } = useAuthStore();
   const activeAccount = useAccountStore((s) => s.accounts.find((a) => a.id === activeAccountId));
+  // Blobs (inline images, drag-out, TNEF, embedded messages, thumbnails, bundle
+  // downloads) are account-scoped. In the unified / All-Mail view the open
+  // message may belong to another login (route to its client) or a delegated
+  // shared account (same client, owner accountId in the URL). Resolve both from
+  // the message's source so cross-account blob fetches don't 404 against the
+  // active account.
+  const isUnifiedView = useEmailStore((s) => s.isUnifiedView);
+  const blobClient = useMemo(() => {
+    const scid = isUnifiedView ? email?.sourceClientAccountId : undefined;
+    return (scid ? useAuthStore.getState().getClientForAccount(scid) : null) ?? client;
+  }, [isUnifiedView, email?.sourceClientAccountId, client]);
+  const blobAccountId = isUnifiedView ? email?.sourceAccountId : undefined;
 
   // List-Unsubscribe mailto: send the message ourselves - this is a webmail
   // client, handing a mailto: URL to the OS mail handler goes nowhere for
@@ -1175,6 +1191,7 @@ export function EmailViewer({
           id: email.id,
           contentType,
           bodyStructure: email.bodyStructure,
+          bodyValues: email.bodyValues,
           attachments: email.attachments,
           blobId: email.blobId,
           from: email.from,
@@ -1250,7 +1267,7 @@ export function EmailViewer({
     async function processTnef() {
       try {
         debug.time('TNEF fetch blob', 'email');
-        const blobBytes = await client!.fetchBlobArrayBuffer(tnefAtt!.blobId!);
+        const blobBytes = await blobClient!.fetchBlobArrayBuffer(tnefAtt!.blobId!, undefined, undefined, blobAccountId);
         debug.timeEnd('TNEF fetch blob', 'email');
         debug.log('email', 'TNEF: Fetched blob, size:', blobBytes.byteLength, 'bytes');
 
@@ -1303,7 +1320,7 @@ export function EmailViewer({
     processTnef();
 
     return () => { cancelled = true; };
-  }, [email, client]);
+  }, [email, client, blobClient, blobAccountId]);
 
   // Embedded message/rfc822 unwrapping
   // When Outlook forwards an email as an attachment, the outer email body is
@@ -1340,7 +1357,7 @@ export function EmailViewer({
 
     async function unwrapEmbedded() {
       try {
-        const blobBytes = await client!.fetchBlobArrayBuffer(rfc822Att!.blobId!);
+        const blobBytes = await blobClient!.fetchBlobArrayBuffer(rfc822Att!.blobId!, undefined, undefined, blobAccountId);
         if (cancelled) { debug.groupEnd(); return; }
         if (blobBytes.byteLength === 0) {
           debug.warn('email', 'Embedded RFC822: Fetched blob is empty');
@@ -1380,7 +1397,7 @@ export function EmailViewer({
     unwrapEmbedded();
 
     return () => { cancelled = true; };
-  }, [email, client]);
+  }, [email, client, blobClient, blobAccountId]);
 
   // Fetch inline CID images with authentication to prevent browser auth dialogs
   useEffect(() => {
@@ -1426,7 +1443,7 @@ export function EmailViewer({
       await Promise.all(cidAttachments.map(async (att) => {
         const cidValue = att.cid!.replace(/^<|>$/g, '');
         try {
-          const objectUrl = await client!.fetchBlobAsObjectUrl(att.blobId, att.name || 'inline', att.type);
+          const objectUrl = await blobClient!.fetchBlobAsObjectUrl(att.blobId, att.name || 'inline', att.type, blobAccountId);
           if (!cancelled) {
             urls[cidValue] = objectUrl;
             objectUrls.push(objectUrl);
@@ -1448,7 +1465,7 @@ export function EmailViewer({
       cancelled = true;
       objectUrls.forEach(url => URL.revokeObjectURL(url));
     };
-  }, [client, email?.id, pluginRenderedAttachments, email?.attachments]);
+  }, [client, blobClient, blobAccountId, email?.id, pluginRenderedAttachments, email?.attachments]);
 
   const effectiveAttachments = useMemo<EffectiveAttachment[]>(() => {
     if (pluginRenderedAttachments.length > 0) {
@@ -1647,10 +1664,8 @@ export function EmailViewer({
             }
           }
 
-          if (node.tagName === 'A') {
-            node.setAttribute('target', '_blank');
-            node.setAttribute('rel', 'noopener noreferrer');
-          }
+          // http(s) links open in a new tab; other schemes keep their default.
+          applyNewTabToAnchor(node);
 
           // No dark mode color transforms - emails render true-to-life in iframe
         });
@@ -1688,7 +1703,11 @@ export function EmailViewer({
         const textContent = email.bodyValues[email.textBody[0].partId].value;
 
         return {
-          html: plainTextToSafeHtml(textContent),
+          // Trailing ">"-quoted block collapses behind a <details> toggle (#480).
+          html: collapsePlainTextQuotes(plainTextToSafeHtml(textContent), {
+            show: t('show_quoted_text'),
+            hide: t('hide_quoted_text'),
+          }),
           isHtml: false,
           hasStyleTag: false,
           externalBlocked: false,
@@ -1728,6 +1747,11 @@ export function EmailViewer({
 
   // Override email content with S/MIME decrypted content when available
   const effectiveEmailContent = useMemo(() => {
+    const plainToHtml = (text: string) =>
+      collapsePlainTextQuotes(plainTextToSafeHtml(text), {
+        show: t('show_quoted_text'),
+        hide: t('hide_quoted_text'),
+      });
     if (pluginRenderedHtml) {
       const htmlWithCidUrls = pluginRenderedHtml.replace(
         /\bcid:([^"'\s)]+)/gi,
@@ -1739,7 +1763,7 @@ export function EmailViewer({
       return { html: cleanHtml, isHtml: true, hasStyleTag: /<style[\s>]/i.test(pluginRenderedHtml), externalBlocked: false };
     }
     if (pluginRenderedText) {
-      return { html: plainTextToSafeHtml(pluginRenderedText), isHtml: false, hasStyleTag: false, externalBlocked: false };
+      return { html: plainToHtml(pluginRenderedText), isHtml: false, hasStyleTag: false, externalBlocked: false };
     }
     // TNEF (winmail.dat) extracted content
     if (tnefHtml) {
@@ -1747,7 +1771,7 @@ export function EmailViewer({
       return { html: cleanHtml, isHtml: true, hasStyleTag: /<style[\s>]/i.test(tnefHtml), externalBlocked: false };
     }
     if (tnefText) {
-      return { html: plainTextToSafeHtml(tnefText), isHtml: false, hasStyleTag: false, externalBlocked: false };
+      return { html: plainToHtml(tnefText), isHtml: false, hasStyleTag: false, externalBlocked: false };
     }
     // Embedded message/rfc822 unwrapped content
     if (embeddedEmailHtml) {
@@ -1755,10 +1779,10 @@ export function EmailViewer({
       return { html: cleanHtml, isHtml: true, hasStyleTag: /<style[\s>]/i.test(embeddedEmailHtml), externalBlocked: false };
     }
     if (embeddedEmailText) {
-      return { html: plainTextToSafeHtml(embeddedEmailText), isHtml: false, hasStyleTag: false, externalBlocked: false };
+      return { html: plainToHtml(embeddedEmailText), isHtml: false, hasStyleTag: false, externalBlocked: false };
     }
     return emailContent;
-  }, [cidBlobUrls, emailContent, pluginRenderedHtml, pluginRenderedText, tnefHtml, tnefText, embeddedEmailHtml, embeddedEmailText]);
+  }, [cidBlobUrls, emailContent, pluginRenderedHtml, pluginRenderedText, tnefHtml, tnefText, embeddedEmailHtml, embeddedEmailText, t]);
 
   const resolveAttachmentName = useCallback(
     (attachment: EffectiveAttachment) => {
@@ -1926,8 +1950,8 @@ export function EmailViewer({
       for (const attachment of effectiveAttachments) {
         const entryName = uniqueName(getAttachmentDisplayName(attachment.name, attachment.type));
         try {
-          if (attachment.blobId && client) {
-            const blob = await client.fetchBlob(attachment.blobId, attachment.name || entryName, attachment.type);
+          if (attachment.blobId && blobClient) {
+            const blob = await blobClient.fetchBlob(attachment.blobId, attachment.name || entryName, attachment.type, blobAccountId);
             zip.file(entryName, blob);
             added++;
           } else if (attachment.tnefData) {
@@ -1959,7 +1983,7 @@ export function EmailViewer({
     } finally {
       setIsDownloadingAll(false);
     }
-  }, [isDownloadingAll, effectiveAttachments, client, email]);
+  }, [isDownloadingAll, effectiveAttachments, blobClient, blobAccountId, email]);
 
   // Shared "Download all" chip, shown only when bundling is worthwhile (2+).
   const downloadAllButton = effectiveAttachments.length > 1 ? (
@@ -2001,8 +2025,8 @@ export function EmailViewer({
       await Promise.all(imageAttachments.map(async (att) => {
         let url: string | undefined;
         try {
-          if (att.blobId && client) {
-            url = await client.fetchBlobAsObjectUrl(att.blobId, att.name || 'thumb', att.type);
+          if (att.blobId && blobClient) {
+            url = await blobClient.fetchBlobAsObjectUrl(att.blobId, att.name || 'thumb', att.type, blobAccountId);
           } else if (att.decryptedAttachment) {
             const bytes = getAttachmentContentBytes(att.decryptedAttachment);
             if (!bytes || bytes.byteLength === 0) return;
@@ -2033,7 +2057,7 @@ export function EmailViewer({
       cancelled = true;
       createdUrls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [effectiveAttachments, client, attachmentImagePreviewsEnabled]);
+  }, [effectiveAttachments, client, blobClient, blobAccountId, attachmentImagePreviewsEnabled]);
 
   // Iframe for rendering HTML emails true-to-life
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -2103,9 +2127,21 @@ export function EmailViewer({
     // Word/Outlook HTML emails ship a <style> block but put their gutter in
     // @page margins (print-only), so they need a fallback body padding too.
     const isWordHtml = /class=["']?(?:Mso|WordSection)|<o:p[\s>/]|urn:schemas-microsoft-com:office:office/i.test(effectiveEmailContent.html);
-    const hasOwnLayout = effectiveEmailContent.hasStyleTag && !isWordHtml;
-    const bodyPadding = hasOwnLayout ? '0' : '1rem 1.25rem';
-    const mobileBodyPaddingX = hasOwnLayout ? '0' : '0.75rem';
+    // "auto" spacing: only drop our gutter when the mail paints a full-bleed
+    // background canvas (a width:100% element carrying a background colour) --
+    // the one case where the gutter shows as a frame around the email's own
+    // background. A <style> tag alone is too weak a signal: plenty of
+    // transactional mails ship one for web fonts yet have no gutter of their
+    // own, and zeroing the padding glues their content to the corner.
+    const emailHtml = effectiveEmailContent.html;
+    const hasFullBleedCanvas =
+      /<(?:table|div|body)\b[^>]*(?:\bwidth\s*=\s*["']?\s*100%|width\s*:\s*100%)[^>]*(?:\bbgcolor\s*=|background(?:-color)?\s*:)/i.test(emailHtml) ||
+      /<(?:table|div|body)\b[^>]*(?:\bbgcolor\s*=|background(?:-color)?\s*:)[^>]*(?:\bwidth\s*=\s*["']?\s*100%|width\s*:\s*100%)/i.test(emailHtml);
+    const autoDropsGutter = effectiveEmailContent.hasStyleTag && !isWordHtml && hasFullBleedCanvas;
+    const dropGutter =
+      messageSpacing === 'edge' || (messageSpacing === 'auto' && autoDropsGutter);
+    const bodyPadding = dropGutter ? '0' : '1rem 1.25rem';
+    const mobileBodyPaddingX = dropGutter ? '0' : '0.75rem';
 
     // Word emails rely on empty <p class=MsoNormal>&nbsp;</p> spacers for vertical
     // rhythm. With our default line-height: 1.6 these stack into oversized gaps;
@@ -2166,7 +2202,7 @@ export function EmailViewer({
   ${wordHtmlCSS}
   ${darkModeCSS}
 </style></head><body>${effectiveEmailContent.html}<style>html,body{height:auto!important;min-height:0!important;max-height:none!important}</style></body></html>`;
-  }, [effectiveEmailContent.html, effectiveEmailContent.isHtml, effectiveEmailContent.hasStyleTag, effectiveEmailContent.externalBlocked, isDark, emailHasNativeDarkMode]);
+  }, [effectiveEmailContent.html, effectiveEmailContent.isHtml, effectiveEmailContent.hasStyleTag, effectiveEmailContent.externalBlocked, isDark, emailHasNativeDarkMode, messageSpacing]);
 
   // Unblocking external content is handled by rebuilding the iframe srcDoc:
   // toggling allowExternalContent (both "Load images" and "Trust sender" set
@@ -2190,8 +2226,20 @@ export function EmailViewer({
   // Gates the quick reply on the iframe having loaded the current srcDoc, so
   // it doesn't flash in below a still-resizing iframe.
   const [iframeReady, setIframeReady] = useState(false);
+  // Tracks which parsed document we've already wired up, so setup runs exactly
+  // once per srcDoc even though both the readiness poll below and the iframe
+  // 'load' event can trigger it.
+  const initializedDocRef = useRef<Document | null>(null);
+  // The document present at the instant srcDoc changed - i.e. the one about to
+  // be torn down. contentDocument keeps pointing at it until the browser swaps
+  // the new srcDoc in, so the poll skips it to avoid wiring up stale content.
+  const staleDocRef = useRef<Document | null>(null);
   useLayoutEffect(() => {
     setIframeReady(false);
+    initializedDocRef.current = null;
+    // Runs during commit, before the browser processes the new srcDoc, so
+    // contentDocument here is still the outgoing document.
+    staleDocRef.current = iframeRef.current?.contentDocument ?? null;
   }, [emailIframeSrcDoc]);
 
   const handleIframeLoad = useCallback(() => {
@@ -2199,7 +2247,21 @@ export function EmailViewer({
     if (!iframe) return;
     try {
       const doc = iframe.contentDocument;
-      if (doc?.body) {
+      // Ignore the outgoing document, a transient about:blank (a fresh srcDoc
+      // document reports URL 'about:srcdoc'), and anything that hasn't finished
+      // parsing yet; run the setup below at most once per document.
+      if (!doc?.body || doc === staleDocRef.current || doc.URL !== 'about:srcdoc' || doc.readyState === 'loading') return;
+      if (initializedDocRef.current === doc) return;
+      initializedDocRef.current = doc;
+      {
+        // Collapse the quoted original of a reply behind a "•••" toggle
+        // (#480). Before the height wiring, so the initial measurement
+        // already reflects the collapsed body.
+        setupQuoteCollapse(doc, {
+          show: t('show_quoted_text'),
+          hide: t('hide_quoted_text'),
+        });
+
         // Auto-resize iframe to fit content
         // Measure max(documentElement, body): a height:100% wrapper can leave
         // documentElement.scrollHeight short while the real content lives in body.
@@ -2247,11 +2309,9 @@ export function EmailViewer({
           }
         });
 
-        // Make links open in new tab
-        doc.querySelectorAll('a').forEach(a => {
-          a.setAttribute('target', '_blank');
-          a.setAttribute('rel', 'noopener noreferrer');
-        });
+        // Second pass over the rendered iframe DOM (the hook above only sees
+        // DOMPurify's output); http(s) → new tab, other schemes left in place.
+        doc.querySelectorAll('a').forEach(applyNewTabToAnchor);
 
         // Plugin intercept: let plugins cancel or rewrite external links inside
         // the email body before navigation happens. Bound on the iframe doc so
@@ -2373,7 +2433,27 @@ export function EmailViewer({
     } catch {
       // Cross-origin restrictions - iframe will still display content
     }
-  }, [isDark, emailHasNativeDarkMode, email?.id]);
+  }, [isDark, emailHasNativeDarkMode, email?.id, t]);
+
+  // Wire up the iframe as soon as its sandboxed document has parsed, rather than
+  // waiting for the iframe 'load' event. 'load' also waits on every subresource,
+  // so a single unreachable remote image (server accepts the TCP connection but
+  // never responds) stalls it for the browser's ~60s timeout - freezing the body
+  // at its placeholder height that entire time. The parsed DOM we need for
+  // height, links and dark-mode is ready long before images resolve. Poll the
+  // fresh document's readyState because a sandbox without allow-scripts can't
+  // postMessage a DOMContentLoaded signal out, and the onLoad handler is
+  // idempotent per document so it stays a harmless backstop.
+  useEffect(() => {
+    if (!iframeRef.current) return;
+    const readyPoll = window.setInterval(() => {
+      handleIframeLoad();
+      if (initializedDocRef.current) window.clearInterval(readyPoll);
+    }, 50);
+    // Safety stop: the 'load' backstop covers anything the poll somehow misses.
+    const stop = window.setTimeout(() => window.clearInterval(readyPoll), 15000);
+    return () => { window.clearInterval(readyPoll); window.clearTimeout(stop); };
+  }, [emailIframeSrcDoc, handleIframeLoad]);
 
   // Export email as .eml file
   const handleExportEmail = async () => {
@@ -2781,6 +2861,7 @@ export function EmailViewer({
             variant="default"
             size="sm"
             onClick={() => onEditDraft()}
+            data-testid="edit-draft"
             className="sm:flex sm:flex-row sm:h-8 sm:gap-1.5 sm:py-0"
             title={t('tooltips.edit_draft')}
           >
@@ -3692,7 +3773,7 @@ export function EmailViewer({
                     const opensPreview = isPreviewable && mailAttachmentAction === 'preview';
                     const thumbUrl = imageThumbUrls[attachment.id];
                     return (
-                      <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={client} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
+                      <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={blobClient} accountId={blobAccountId} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
                         {(dragProps) => (
                       <div
                         className={cn(
@@ -3703,6 +3784,8 @@ export function EmailViewer({
                         )}
                         title={`${opensPreview ? tFiles('preview') : t('download')} ${getAttachmentDisplayName(attachment.name, attachment.type)}`}
                         onClick={() => handleEffectiveAttachmentOpen(attachment)}
+                        data-testid="attachment"
+                        data-attachment-name={attachment.name}
                         draggable={dragProps.draggable}
                         onPointerEnter={dragProps.onPointerEnter}
                         onDragStart={dragProps.onDragStart}
@@ -3730,7 +3813,7 @@ export function EmailViewer({
                         </div>
                         <div className={cn(
                           "absolute bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5 rounded-md",
-                          thumbUrl ? "top-1 right-1" : "inset-y-0 right-0 rounded-l-none rounded-r-md",
+                          thumbUrl ? "top-1 end-1" : "inset-y-0 end-0 rounded-s-none rounded-e-md",
                         )}>
                           <button
                             className="p-1 hover:bg-accent rounded transition-colors"
@@ -3767,13 +3850,13 @@ export function EmailViewer({
                   {showAllBesideAttachments && effectiveAttachments.length > 2 && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setShowAllBesideAttachments(false)} />
-                      <div className="absolute top-full right-0 mt-1 z-50 bg-background border border-border rounded-lg shadow-lg p-2 flex flex-col gap-1 min-w-[220px]">
+                      <div className="absolute top-full end-0 mt-1 z-50 bg-background border border-border rounded-lg shadow-lg p-2 flex flex-col gap-1 min-w-[220px]">
                         {effectiveAttachments.slice(2).map((attachment) => {
                           const FileIcon = getFileIcon(attachment.name || undefined, attachment.type);
                           const isPreviewable = isFilePreviewable(attachment.name || undefined, attachment.type);
                           const opensPreview = isPreviewable && mailAttachmentAction === 'preview';
                           return (
-                            <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={client} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
+                            <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={blobClient} accountId={blobAccountId} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
                               {(dragProps) => (
                             <div
                               className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted/60 group relative cursor-pointer w-full"
@@ -3791,7 +3874,7 @@ export function EmailViewer({
                               <span className="text-[10px] text-muted-foreground ms-auto flex-shrink-0">
                                 {formatFileSize(attachment.size)}
                               </span>
-                              <div className="absolute inset-y-0 right-0 rounded-r-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
+                              <div className="absolute inset-y-0 end-0 rounded-e-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
                                 <button
                                   className="p-1 hover:bg-accent rounded transition-colors"
                                   title={t('download')}
@@ -4466,7 +4549,7 @@ export function EmailViewer({
               const opensPreview = isPreviewable && mailAttachmentAction === 'preview';
               const thumbUrl = imageThumbUrls[attachment.id];
               return (
-                <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={client} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
+                <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={blobClient} accountId={blobAccountId} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
                   {(dragProps) => (
                 <div
                   className={cn(
@@ -4477,6 +4560,8 @@ export function EmailViewer({
                   )}
                   title={`${opensPreview ? tFiles('preview') : t('download')} ${getAttachmentDisplayName(attachment.name, attachment.type)}`}
                   onClick={() => handleEffectiveAttachmentOpen(attachment)}
+                  data-testid="attachment"
+                  data-attachment-name={attachment.name}
                   draggable={dragProps.draggable}
                   onPointerEnter={dragProps.onPointerEnter}
                   onDragStart={dragProps.onDragStart}
@@ -4509,7 +4594,7 @@ export function EmailViewer({
                   </div>
                   <div className={cn(
                     "absolute rounded-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5",
-                    thumbUrl ? "top-1 right-1" : "inset-y-0 right-0 rounded-r-md rounded-l-none",
+                    thumbUrl ? "top-1 end-1" : "inset-y-0 end-0 rounded-e-md rounded-s-none",
                   )}>
                     <button
                       className="p-1 hover:bg-accent rounded transition-colors"
@@ -4546,13 +4631,13 @@ export function EmailViewer({
             {showAllBelowHeaderAttachments && visibleBelowHeaderCount !== null && effectiveAttachments.length > visibleBelowHeaderCount && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowAllBelowHeaderAttachments(false)} />
-                <div className="absolute top-full right-0 mt-1 z-50 bg-background border border-border rounded-lg shadow-lg p-2 flex flex-col gap-1 min-w-[260px] max-h-[60vh] overflow-y-auto">
+                <div className="absolute top-full end-0 mt-1 z-50 bg-background border border-border rounded-lg shadow-lg p-2 flex flex-col gap-1 min-w-[260px] max-h-[60vh] overflow-y-auto">
                   {effectiveAttachments.slice(visibleBelowHeaderCount).map((attachment) => {
                     const FileIcon = getFileIcon(attachment.name || undefined, attachment.type);
                     const isPreviewable = isFilePreviewable(attachment.name || undefined, attachment.type);
                     const opensPreview = isPreviewable && mailAttachmentAction === 'preview';
                     return (
-                      <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={client} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
+                      <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={blobClient} accountId={blobAccountId} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
                         {(dragProps) => (
                       <div
                         className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted/60 group relative cursor-pointer w-full"
@@ -4570,7 +4655,7 @@ export function EmailViewer({
                         <span className="text-xs text-muted-foreground ms-auto flex-shrink-0">
                           {formatFileSize(attachment.size)}
                         </span>
-                        <div className="absolute inset-y-0 right-0 rounded-r-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
+                        <div className="absolute inset-y-0 end-0 rounded-e-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
                           <button
                             className="p-1 hover:bg-accent rounded transition-colors"
                             title={t('download')}
@@ -4610,7 +4695,7 @@ export function EmailViewer({
                 const opensPreview = isPreviewable && mailAttachmentAction === 'preview';
                 const thumbUrl = imageThumbUrls[attachment.id];
                 return (
-                  <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={client} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
+                  <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={blobClient} accountId={blobAccountId} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
                     {(dragProps) => (
                   <div
                     className={cn(
@@ -4621,6 +4706,8 @@ export function EmailViewer({
                     )}
                     title={`${opensPreview ? tFiles('preview') : t('download')} ${getAttachmentDisplayName(attachment.name, attachment.type)}`}
                     onClick={() => handleEffectiveAttachmentOpen(attachment)}
+                    data-testid="attachment"
+                    data-attachment-name={attachment.name}
                     draggable={dragProps.draggable}
                     onPointerEnter={dragProps.onPointerEnter}
                     onDragStart={dragProps.onDragStart}
@@ -4648,7 +4735,7 @@ export function EmailViewer({
                     </div>
                     <div className={cn(
                       "absolute bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5 rounded-md",
-                      thumbUrl ? "top-1 right-1" : "inset-y-0 right-0 rounded-l-none rounded-r-md",
+                      thumbUrl ? "top-1 end-1" : "inset-y-0 end-0 rounded-s-none rounded-e-md",
                     )}>
                       <button
                         className="p-1 hover:bg-accent rounded transition-colors"
@@ -4684,13 +4771,13 @@ export function EmailViewer({
               {showAllMobileAttachments && effectiveAttachments.length > 2 && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowAllMobileAttachments(false)} />
-                  <div className="absolute top-full left-0 mt-1 z-50 bg-background border border-border rounded-lg shadow-lg p-2 flex flex-col gap-1 min-w-[220px]">
+                  <div className="absolute top-full start-0 mt-1 z-50 bg-background border border-border rounded-lg shadow-lg p-2 flex flex-col gap-1 min-w-[220px]">
                     {effectiveAttachments.slice(2).map((attachment) => {
                       const FileIcon = getFileIcon(attachment.name || undefined, attachment.type);
                       const isPreviewable = isFilePreviewable(attachment.name || undefined, attachment.type);
                       const opensPreview = isPreviewable && mailAttachmentAction === 'preview';
                       return (
-                        <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={client} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
+                        <DraggableAttachmentChip key={attachment.id} attachment={attachment} client={blobClient} accountId={blobAccountId} enabled={dragOutActive} downloadName={resolveAttachmentName(attachment)}>
                           {(dragProps) => (
                         <div
                           className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted/60 group relative cursor-pointer w-full"
@@ -4708,7 +4795,7 @@ export function EmailViewer({
                           <span className="text-[10px] text-muted-foreground ms-auto flex-shrink-0">
                             {formatFileSize(attachment.size)}
                           </span>
-                          <div className="absolute inset-y-0 right-0 rounded-r-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
+                          <div className="absolute inset-y-0 end-0 rounded-e-md bg-background/95 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 px-1.5">
                             <button
                               className="p-1 hover:bg-accent rounded transition-colors"
                               title={t('download')}

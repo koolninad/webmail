@@ -114,6 +114,7 @@
     "unified_archive": "所有归档",
     "unified_junk": "所有垃圾邮件",
     "all_accounts": "所有账户",
+    "unified_mailbox": "统一邮箱",
     "expand": "展开",
     "collapse": "收起",
     "expand_tooltip": "展开",
@@ -137,7 +138,9 @@
     "scheduled": "已计划",
     "unified_all_unread": "全部未读",
     "unified_all_starred": "全部加星标",
-    "unified_all_mail": "全部邮件"
+    "unified_all_mail": "全部邮件",
+    "remove_account": "Remove account",
+    "remove_account_confirm": "Remove {account} from this device? You can add it back later."
   },
   "protocol_handlers": {
     "title": "默认应用",
@@ -274,6 +277,8 @@
     "no_subject": "（无主题）",
     "no_body_content": "（无正文内容）",
     "no_preview_available": "无可用预览",
+    "show_quoted_text": "显示引用文本",
+    "hide_quoted_text": "隐藏引用文本",
     "loading_email": "正在加载邮件...",
     "loading": "正在加载…",
     "reply": "回复",
@@ -647,7 +652,6 @@
     "continue_draft": "继续编辑草稿",
     "close_draft_title": "保存或丢弃草稿？",
     "close_draft_message": "您有未保存的更改。要将其保存为草稿还是丢弃？",
-    "save_draft": "保存草稿",
     "smime_sign_on": "S/MIME 签名已启用",
     "smime_sign_off": "启用 S/MIME 签名",
     "smime_encrypt_on": "S/MIME 加密已启用",
@@ -924,14 +928,16 @@
       "unified_mailbox": {
         "label": "统一邮箱",
         "description": "显示所有已连接账户的合并文件夹（收件箱、已发送等）",
+        "cross_account": {
+          "label": "Across all accounts",
+          "description": "Merge the unified mailbox across every connected account instead of staying within the active account."
+        },
         "include_group": {
           "label": "包含群组收件箱",
           "description": "在统一视图中也合并共享/群组收件箱。"
         }
       },
       "all_mail": {
-        "label": "All Mail",
-        "description": "Show an \"All Mail\" entry above your folders that merges messages from across this account's folders into one list.",
         "folders_label": "Folders in All Mail",
         "folders_description": "Choose which folders are merged into the All Mail view.",
         "account_hint": "Applies to {account}.",
@@ -948,6 +954,10 @@
       "show_folder_total_count": {
         "label": "显示邮件总数",
         "description": "在文件夹和标签旁边显示邮件总数，以及未读数量。停用后仅显示未读数量。"
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "Pro 界面（实验性）",
@@ -1109,6 +1119,13 @@
         "trash_and_read": "移至已删除并标记为已读",
         "permanent": "永久删除",
         "warning": "邮件将被永久删除且无法恢复。此操作是不可逆转的。"
+      },
+      "message_spacing": {
+        "label": "邮件边距",
+        "description": "阅读时正文周围的边距",
+        "auto": "自动（推荐）",
+        "always": "始终添加边距",
+        "edge": "无边距"
       },
       "archive_mode": {
         "label": "归档方式",
@@ -1525,7 +1542,10 @@
         "subject_placeholder": "外出办公",
         "body_label": "邮件正文",
         "body_description": "纯文本邮件内容",
-        "body_placeholder": "感谢您的来信。我目前不在办公室，返回后会尽快回复您的邮件。"
+        "body_placeholder": "感谢您的来信。我目前不在办公室，返回后会尽快回复您的邮件。",
+        "html_label": "带格式的消息（HTML）",
+        "html_description": "添加带链接和样式的格式化版本。邮件客户端无法显示时，收件人将看到上面的纯文本。",
+        "html_placeholder": "撰写带格式的外出自动回复…"
       },
       "preview": {
         "title": "预览",
@@ -1557,6 +1577,8 @@
       "role_none": "无",
       "create_folder": "创建文件夹",
       "create_subfolder": "新建子文件夹",
+      "reorder": "拖动以重新排序",
+      "reorder_error": "文件夹重新排序失败",
       "subfolder_of": "{name} 内",
       "subfolder_name": "子文件夹名称",
       "new_folder_name": "文件夹名称",
@@ -1621,6 +1643,11 @@
         "label": "键盘快捷键",
         "description": "查看可用快捷键",
         "button": "查看快捷方式"
+      },
+      "refresh_cache": {
+        "label": "Refresh cached data",
+        "description": "Reload contacts, calendars, and folders from the server. Keeps your accounts and sessions — fixes a stale or wrong view without signing out.",
+        "button": "Refresh"
       },
       "reset_settings": {
         "label": "重置设置",

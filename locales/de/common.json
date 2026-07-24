@@ -114,6 +114,7 @@
     "unified_archive": "Alle Archive",
     "unified_junk": "Alle Spam",
     "all_accounts": "Alle Konten",
+    "unified_mailbox": "Gemeinsames Postfach",
     "expand": "Erweitern",
     "collapse": "Einklappen",
     "expand_tooltip": "Erweitern",
@@ -137,7 +138,9 @@
     "scheduled": "Geplant",
     "unified_all_unread": "Alle ungelesenen",
     "unified_all_starred": "Alle markierten",
-    "unified_all_mail": "Alle Mails"
+    "unified_all_mail": "Alle Mails",
+    "remove_account": "Remove account",
+    "remove_account_confirm": "Remove {account} from this device? You can add it back later."
   },
   "protocol_handlers": {
     "title": "Standard-Apps",
@@ -274,6 +277,8 @@
     "no_subject": "(Kein Betreff)",
     "no_body_content": "(Kein Inhalt verfügbar)",
     "no_preview_available": "Keine Vorschau verfügbar",
+    "show_quoted_text": "Zitierten Text anzeigen",
+    "hide_quoted_text": "Zitierten Text ausblenden",
     "loading_email": "E-Mail wird geladen...",
     "loading": "Lädt...",
     "reply": "Antworten",
@@ -654,7 +659,6 @@
     "continue_draft": "Entwurf fortsetzen",
     "close_draft_title": "Entwurf speichern oder verwerfen?",
     "close_draft_message": "Sie haben ungespeicherte Änderungen. Möchten Sie diese als Entwurf speichern oder verwerfen?",
-    "save_draft": "Entwurf speichern",
     "drop_files": "Dateien zum Anhängen ablegen",
     "show_less": "Weniger anzeigen",
     "forgot_attachment": {
@@ -924,14 +928,16 @@
       "unified_mailbox": {
         "label": "Gemeinsames Postfach",
         "description": "Kombinierte Ordner (Posteingang, Gesendet usw.) für alle verbundenen Konten anzeigen",
+        "cross_account": {
+          "label": "Über alle Konten",
+          "description": "Den vereinheitlichten Posteingang über alle verbundenen Konten zusammenführen, statt beim aktiven Konto zu bleiben."
+        },
         "include_group": {
           "label": "Gruppenpostfächer einbeziehen",
           "description": "Gemeinsam genutzte/Gruppenpostfächer ebenfalls in die vereinheitlichte Ansicht aufnehmen."
         }
       },
       "all_mail": {
-        "label": "All Mail",
-        "description": "Show an \"All Mail\" entry above your folders that merges messages from across this account's folders into one list.",
         "folders_label": "Folders in All Mail",
         "folders_description": "Choose which folders are merged into the All Mail view.",
         "account_hint": "Gilt für {account}.",
@@ -948,6 +954,10 @@
       "show_folder_total_count": {
         "label": "Gesamtzahl der Nachrichten anzeigen",
         "description": "Zeigt neben Ordnern und Tags die Gesamtzahl der Nachrichten zusätzlich zur Anzahl ungelesener Nachrichten an. Deaktivieren, um nur ungelesene Nachrichten anzuzeigen."
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "Pro-Oberfläche (experimentell)",
@@ -1109,6 +1119,13 @@
         "trash_and_read": "In Papierkorb verschieben und als gelesen markieren",
         "permanent": "Dauerhaft löschen",
         "warning": "E-Mails werden dauerhaft gelöscht und können nicht wiederhergestellt werden. Diese Aktion ist unwiderruflich."
+      },
+      "message_spacing": {
+        "label": "Nachrichtenabstand",
+        "description": "Abstand um den Nachrichtentext in der Leseansicht",
+        "auto": "Automatisch (empfohlen)",
+        "always": "Immer Abstand hinzufügen",
+        "edge": "Randlos"
       },
       "archive_mode": {
         "label": "Nachrichten archivieren in",
@@ -1525,7 +1542,10 @@
         "subject_placeholder": "Abwesenheitsnotiz",
         "body_label": "Nachrichtentext",
         "body_description": "Nur-Text-Nachrichteninhalt",
-        "body_placeholder": "Vielen Dank für Ihre E-Mail. Ich bin derzeit nicht im Büro und werde nach meiner Rückkehr antworten."
+        "body_placeholder": "Vielen Dank für Ihre E-Mail. Ich bin derzeit nicht im Büro und werde nach meiner Rückkehr antworten.",
+        "html_label": "Formatierte Nachricht (HTML)",
+        "html_description": "Fügen Sie eine formatierte Version mit Links und Gestaltung hinzu. Empfänger, deren E-Mail-Programm sie nicht anzeigen kann, sehen den obigen Klartext.",
+        "html_placeholder": "Formatierte Abwesenheitsantwort schreiben…"
       },
       "preview": {
         "title": "Vorschau",
@@ -1557,6 +1577,8 @@
       "role_none": "Keine",
       "create_folder": "Ordner erstellen",
       "create_subfolder": "Unterordner erstellen",
+      "reorder": "Zum Neuanordnen ziehen",
+      "reorder_error": "Ordner konnten nicht neu angeordnet werden",
       "subfolder_of": "In {name}",
       "subfolder_name": "Name des Unterordners",
       "new_folder_name": "Ordnername",
@@ -1621,6 +1643,11 @@
         "label": "Tastaturkürzel",
         "description": "Verfügbare Tastaturkürzel anzeigen",
         "button": "Tastaturkürzel anzeigen"
+      },
+      "refresh_cache": {
+        "label": "Refresh cached data",
+        "description": "Reload contacts, calendars, and folders from the server. Keeps your accounts and sessions — fixes a stale or wrong view without signing out.",
+        "button": "Refresh"
       },
       "reset_settings": {
         "label": "Einstellungen zurücksetzen",

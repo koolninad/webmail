@@ -114,6 +114,7 @@
     "unified_archive": "Arhivă completă",
     "unified_junk": "Toate mesajele nedorite",
     "all_accounts": "Toate conturile",
+    "unified_mailbox": "Căsuță poștală unificată",
     "expand": "Extindeți",
     "collapse": "Reduceți",
     "expand_tooltip": "Extindeți",
@@ -137,7 +138,9 @@
     "scheduled": "Programat",
     "unified_all_unread": "Toate necitite",
     "unified_all_starred": "Toate cu stea",
-    "unified_all_mail": "Toată poșta"
+    "unified_all_mail": "Toată poșta",
+    "remove_account": "Remove account",
+    "remove_account_confirm": "Remove {account} from this device? You can add it back later."
   },
   "protocol_handlers": {
     "title": "Aplicații implicite",
@@ -274,6 +277,8 @@
     "no_subject": "(Fără subiect)",
     "no_body_content": "(Nu există conținut disponibil)",
     "no_preview_available": "Nu este disponibilă previzualizarea",
+    "show_quoted_text": "Afișează textul citat",
+    "hide_quoted_text": "Ascunde textul citat",
     "loading_email": "Se încarcă e-mailul...",
     "loading": "Se încarcă...",
     "reply": "Răspunde",
@@ -650,7 +655,6 @@
     "continue_draft": "Continuă schița",
     "close_draft_title": "Să salvați sau să renunțați la schiță?",
     "close_draft_message": "Aveți modificări nesalvate. Doriți să salvați acest mesaj ca schiță sau să îl ignorați?",
-    "save_draft": "Salvează schița",
     "smime_sign_on": "S/MIME semnarea activată",
     "smime_sign_off": "Activați semnarea cu „S/MIME”",
     "smime_encrypt_on": "S/MIME criptare activată",
@@ -927,14 +931,16 @@
       "unified_mailbox": {
         "label": "Căsuță poștală unificată",
         "description": "Afișați folderele combinate (Mesaje primite, Mesaje trimise etc.) pentru toate conturile conectate",
+        "cross_account": {
+          "label": "Across all accounts",
+          "description": "Merge the unified mailbox across every connected account instead of staying within the active account."
+        },
         "include_group": {
           "label": "Includeți căsuțele de e-mail de grup",
           "description": "De asemenea, integrați căsuțele de e-mail partajate/de grup în vizualizarea unificată."
         }
       },
       "all_mail": {
-        "label": "Toate mesajele",
-        "description": "Afișați o intrare „Toate mesajele” deasupra folderelor, care reunește mesajele din toate folderele acestui cont într-o singură listă.",
         "folders_label": "Dosare în „Toate mesajele”",
         "folders_description": "Alegeți ce dosare să fie incluse în vizualizarea „Toate mesajele”.",
         "account_hint": "Se aplică pentru {account}.",
@@ -951,6 +957,10 @@
       "show_folder_total_count": {
         "label": "Afișează numărul total de mesaje",
         "description": "Afișează numărul total de mesaje lângă foldere și etichete, pe lângă numărul celor necitite. Dezactivează pentru a afișa doar mesajele necitite."
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "Interfață Pro (experimentală)",
@@ -1112,6 +1122,13 @@
         "trash_and_read": "Mută în Coșul de gunoi și marchează ca citit",
         "permanent": "Șterge definitiv",
         "warning": "E-mailurile vor fi șterse definitiv și nu pot fi recuperate. Această acțiune este ireversibilă."
+      },
+      "message_spacing": {
+        "label": "Spațierea mesajului",
+        "description": "Spațiu în jurul corpului mesajului în cititor",
+        "auto": "Automat (recomandat)",
+        "always": "Adaugă întotdeauna spațiere",
+        "edge": "Din margine în margine"
       },
       "archive_mode": {
         "label": "Arhivați în",
@@ -1532,7 +1549,10 @@
         "subject_placeholder": "Absent de la birou",
         "body_label": "Corpul mesajului",
         "body_description": "Conținutul mesajelor în text simplu",
-        "body_placeholder": "Vă mulțumesc pentru e-mail. În prezent nu mă aflu la birou și vă voi răspunde la întoarcere."
+        "body_placeholder": "Vă mulțumesc pentru e-mail. În prezent nu mă aflu la birou și vă voi răspunde la întoarcere.",
+        "html_label": "Mesaj formatat (HTML)",
+        "html_description": "Adăugați o versiune formatată, cu linkuri și stil. Destinatarii al căror client de e-mail nu o poate afișa vor vedea textul simplu de mai sus.",
+        "html_placeholder": "Scrieți un răspuns de absență formatat…"
       },
       "preview": {
         "title": "Previzualizare",
@@ -1564,6 +1584,8 @@
       "role_none": "Niciunul",
       "create_folder": "Creați un dosar",
       "create_subfolder": "Creați un subfolder",
+      "reorder": "Trageți pentru a reordona",
+      "reorder_error": "Reordonarea dosarelor a eșuat",
       "subfolder_of": "În interiorul {name}",
       "subfolder_name": "Numele subfolderului",
       "new_folder_name": "Numele folderului",
@@ -1628,6 +1650,11 @@
         "label": "Comenzi rapide de la tastatură",
         "description": "Vedeți comenzile rapide de la tastatură disponibile",
         "button": "Comenzi rapide de vizualizare"
+      },
+      "refresh_cache": {
+        "label": "Refresh cached data",
+        "description": "Reload contacts, calendars, and folders from the server. Keeps your accounts and sessions — fixes a stale or wrong view without signing out.",
+        "button": "Refresh"
       },
       "reset_settings": {
         "label": "Resetare setări",

@@ -44,12 +44,12 @@ interface AuthState {
   refreshAccessToken: () => Promise<string | null>;
   logout: () => void;
   logoutAll: () => void;
+  removeAccount: (accountId: string) => void;
   switchAccount: (accountId: string) => Promise<void>;
   checkAuth: () => Promise<void>;
   clearError: () => void;
   syncIdentities: () => void;
   refreshIdentities: () => Promise<void>;
-  applyPreferredIdentityOrdering: () => void;
   getClientForAccount: (accountId: string) => JMAPClient | undefined;
   getAllConnectedClients: () => Map<string, JMAPClient>;
 }
@@ -198,25 +198,16 @@ function sortIdentities(rawIdentities: Identity[], username: string): Identity[]
 }
 
 function loadIdentities(rawIdentities: Identity[], username: string): { identities: Identity[]; primaryIdentity: Identity | null } {
-  const settings = useSettingsStore.getState();
-  const preferredMap = settings.preferredIdentityIds || {};
-  let preferredPrimaryId = preferredMap[username] ?? null;
-
-  // One-time migration: builds before #507 stored the preferred identity only
-  // in the browser-local identity-storage (never synced). If the synced
-  // settings have no entry for this account yet, adopt that legacy local value
-  // and write it into the synced settings so it persists across devices.
-  if (preferredPrimaryId == null) {
-    const legacy = useIdentityStore.getState().preferredPrimaryId;
-    if (legacy) {
-      preferredPrimaryId = legacy;
-      settings.updateSetting('preferredIdentityIds', { ...preferredMap, [username]: legacy });
-    }
-  }
+  // The synced per-account default sender identity (#507) is keyed by
+  // AccountEntry.id and re-applied by applyPreferredIdentity() once
+  // loadFromServer resolves (the accountId isn't known here). At load time we
+  // only honour the browser-local fallback (identity-storage) so the ordering
+  // is stable before - or entirely without - settings sync.
+  const preferredPrimaryId = useIdentityStore.getState().preferredPrimaryId;
 
   const identities = sortIdentities(rawIdentities, username);
 
-  // If user has a preferred primary, move it to front
+  // If a local preferred primary is set, move it to the front.
   if (preferredPrimaryId) {
     const idx = identities.findIndex((id) => id.id === preferredPrimaryId);
     if (idx > 0) {
@@ -227,10 +218,58 @@ function loadIdentities(rawIdentities: Identity[], username: string): { identiti
 
   const primaryIdentity = identities[0] ?? null;
   useIdentityStore.getState().setIdentities(identities);
-  // Mirror the resolved choice into the identity store so the identity-manager
-  // UI (the ⭐ marker) reflects the active account's preferred identity.
-  useIdentityStore.setState({ preferredPrimaryId });
   return { identities, primaryIdentity };
+}
+
+/**
+ * Re-apply the per-account default sender identity once synced settings are
+ * available (issue #507). The choice is stored server-side in the settings
+ * store (`preferredIdentityIds`, keyed by AccountEntry.id), so it can only be
+ * applied after `loadFromServer` resolves. It reorders the account's identities
+ * so the preferred one is primary - the composer defaults its `From` to
+ * identities[0]. No-op when nothing is configured for the account.
+ *
+ * Also performs the one-time migration of the pre-#507 browser-local default
+ * (identity-storage) into the synced per-account map, keyed by accountId.
+ *
+ * @param accountId The account to apply for; defaults to the active account.
+ */
+export function applyPreferredIdentity(accountId?: string | null): void {
+  const targetId = accountId ?? useAccountStore.getState().activeAccountId;
+  if (!targetId) return;
+
+  const idStore = useIdentityStore.getState();
+  // Only touch the live identity store when it currently holds this account's
+  // identities (true for the active account). Switching snapshots/restores the
+  // ordering per account, so a background account's order is restored later.
+  // The local fallback below also belongs to the active account, so gate first.
+  if (useAccountStore.getState().activeAccountId !== targetId) return;
+
+  let preferred = useSettingsStore.getState().preferredIdentityIds[targetId] ?? null;
+
+  // One-time migration: before #507 the default lived only in the browser-local
+  // identity-storage (never synced). If the synced map has no entry for this
+  // account yet, adopt that local value and persist it (keyed by accountId) so
+  // it follows the user across devices.
+  if (!preferred) {
+    const legacy = idStore.preferredPrimaryId;
+    if (legacy) {
+      preferred = legacy;
+      const current = useSettingsStore.getState().preferredIdentityIds;
+      useSettingsStore.getState().updateSetting('preferredIdentityIds', { ...current, [targetId]: legacy });
+    }
+  }
+  if (!preferred) return;
+
+  idStore.setPreferredPrimary(preferred);
+  const ids = [...idStore.identities];
+  const idx = ids.findIndex((i) => i.id === preferred);
+  if (idx > 0) {
+    const [p] = ids.splice(idx, 1);
+    ids.unshift(p);
+    idStore.setIdentities(ids);
+  }
+  useAuthStore.setState({ identities: ids, primaryIdentity: ids[0] ?? null });
 }
 
 function getLocaleLoginPath(): string {
@@ -375,6 +414,79 @@ function scheduleRefresh(expiresIn: number, refreshFn: () => Promise<string | nu
       });
     }, refreshAt);
   }
+}
+
+/**
+ * Derive the accountId a *connected* client actually belongs to, using the
+ * same canonicalisation as login (primary-identity email for OAuth, else the
+ * JMAP session username). Lets a caller detect a slot->token mapping that
+ * resolves to the wrong account before it surfaces as the wrong mailbox.
+ * Returns null when it can't determine the identity (treated as "don't block").
+ */
+export function buildServerIdentifiers(
+  sessionUsername: string | undefined,
+  primaryEmail: string | undefined,
+  serverUrl: string,
+): string[] {
+  const ids = new Set<string>();
+  if (sessionUsername) ids.add(generateAccountId(sessionUsername, serverUrl));
+  if (primaryEmail) ids.add(generateAccountId(primaryEmail, serverUrl));
+  return [...ids];
+}
+
+export async function connectedAccountCandidates(client: JMAPClient, serverUrl: string): Promise<string[]> {
+  // accountId is generated differently per auth mode: OAuth/SSO registers from
+  // the primary-identity EMAIL, basic auth from the typed login username. A
+  // single derivation can't match both, so collect every server-confirmed
+  // identifier the connected session exposes — the JMAP Session.username
+  // (authenticated login) and the primary sending-identity email — and let the
+  // caller accept the session if the target accountId matches ANY of them.
+  // Deliberately excludes client.getUsername(), which echoes the constructor
+  // username (always the target) and would defeat the desync check. An empty
+  // result means nothing could be confirmed → the caller should NOT force a
+  // re-auth.
+  let sessionUser: string | undefined;
+  try {
+    sessionUser = client.getSessionUsername();
+  } catch { /* session unavailable */ }
+  let primaryEmail: string | undefined;
+  try {
+    // Pure resolution (no setIdentities side effect): this guard runs while the
+    // previous account may still be on screen during a seamless switch, so it
+    // must not mutate the live identity store.
+    const sorted = sortIdentities(await client.getIdentities(), client.getUsername());
+    primaryEmail = sorted[0]?.email;
+  } catch { /* identities unavailable */ }
+  return buildServerIdentifiers(sessionUser, primaryEmail, serverUrl);
+}
+
+/**
+ * Decide whether a freshly connected session may be bound to `accountId`.
+ *
+ * `connectedCandidates` are the server-confirmed identifiers of the session we
+ * just connected ({@link connectedAccountCandidates}). We accept when they
+ * overlap either the stored `accountId` (full-email / OAuth logins, where the
+ * id already IS the canonical address) or `storedIdentifiers` — the identifiers
+ * captured when THIS account last logged in, which cover a short login username
+ * the server canonicalizes to a full address.
+ *
+ *  - 'accept' — bind the session (matched, or nothing confirmable to check).
+ *  - 'trust'  — legacy account with no baseline yet: accept and backfill (TOFU),
+ *               so short-username accounts created before this check self-heal
+ *               instead of bouncing forever.
+ *  - 'reject' — server identity contradicts a known baseline: a real desync;
+ *               force a clean re-auth.
+ */
+export function classifySessionMatch(
+  connectedCandidates: string[],
+  accountId: string,
+  storedIdentifiers: string[] | undefined,
+): 'accept' | 'trust' | 'reject' {
+  if (connectedCandidates.length === 0) return 'accept';
+  const accepted = new Set<string>([accountId, ...(storedIdentifiers ?? [])]);
+  if (connectedCandidates.some((c) => accepted.has(c))) return 'accept';
+  if (storedIdentifiers === undefined) return 'trust';
+  return 'reject';
 }
 
 function clearRefreshTimer(accountId?: string): void {
@@ -601,6 +713,14 @@ export const useAuthStore = create<AuthState>()(
             lastLoginAt: Date.now(),
           });
 
+          // Capture the server-confirmed identity now so a later account switch
+          // recognizes this session even when `username` is a short login name
+          // the server canonicalizes to a different address (see the switch guard).
+          const serverIdentifiers = buildServerIdentifiers(client.getSessionUsername(), primaryIdentity?.email, serverUrl);
+          if (serverIdentifiers.length > 0) {
+            accountStore.updateAccount(accountId, { serverIdentifiers });
+          }
+
           set({
             isAuthenticated: true,
             isLoading: false,
@@ -638,6 +758,7 @@ export const useAuthStore = create<AuthState>()(
             if (!config.settingsSyncEnabled) return;
             useSettingsStore.getState().loadFromServer(username, serverUrl).finally(() => {
               useSettingsStore.getState().enableSync(username, serverUrl);
+              applyPreferredIdentity(accountId);
             });
           }).catch(() => {});
 
@@ -840,6 +961,7 @@ export const useAuthStore = create<AuthState>()(
             if (!config.settingsSyncEnabled) return;
             useSettingsStore.getState().loadFromServer(username, serverUrl).finally(() => {
               useSettingsStore.getState().enableSync(username, serverUrl);
+              applyPreferredIdentity(accountId);
             });
           }).catch(() => {});
 
@@ -977,6 +1099,7 @@ export const useAuthStore = create<AuthState>()(
             if (!cfg.settingsSyncEnabled) return;
             useSettingsStore.getState().loadFromServer(username, ssoServerUrl).finally(() => {
               useSettingsStore.getState().enableSync(username, ssoServerUrl);
+              applyPreferredIdentity(accountId);
             });
           }).catch(() => {});
 
@@ -1172,6 +1295,31 @@ export const useAuthStore = create<AuthState>()(
         redirectToLogin();
       },
 
+      // Remove a specific (typically non-active) account: tear down its client,
+      // drop it from the registry, and clear its per-slot cookies. If asked to
+      // remove the active account, defer to logout() which handles switching
+      // away or redirecting.
+      removeAccount: (accountId: string) => {
+        if (accountId === get().activeAccountId) { get().logout(); return; }
+        const accountStore = useAccountStore.getState();
+        const account = accountStore.getAccountById(accountId);
+        if (!account) return;
+        const slot = account.cookieSlot ?? 0;
+        const wasOAuth = account.authMode === 'oauth';
+
+        clearRefreshTimer(accountId);
+        const client = clients.get(accountId);
+        if (client) { try { client.disconnect(); } catch { /* noop */ } }
+        clients.delete(accountId);
+        evictAccount(accountId);
+        accountStore.removeAccount(accountId);
+
+        apiFetch(`/api/auth/session?slot=${slot}`, { method: 'DELETE', keepalive: true }).catch(() => {});
+        if (wasOAuth) {
+          apiFetch(`/api/auth/token?slot=${slot}`, { method: 'DELETE', keepalive: true }).catch(() => {});
+        }
+      },
+
       logoutAll: () => {
         // Disconnect all clients
         for (const c of clients.values()) {
@@ -1205,24 +1353,30 @@ export const useAuthStore = create<AuthState>()(
         const targetAccount = accountStore.getAccountById(accountId);
         if (!targetAccount) return;
 
-        // Null out the client immediately so the page doesn't fire data-loading
-        // effects with the old client while stores are being cleared.
-        set({ isLoading: true, client: null, isRateLimited: false, rateLimitUntil: null });
-
-        // Snapshot current account
-        if (state.activeAccountId) {
-          snapshotAccount(state.activeAccountId);
-        }
-
-        // Clear current stores
-        clearAllStores();
-        useSettingsStore.getState().disableSync();
-
-        // Get or create client for target account
+        // A switch between two already-connected accounts is done seamlessly:
+        // the current account's client and mail stay on screen while we verify
+        // the target session, then the store state is swapped in one synchronous
+        // batch (further below). Nulling the client / raising isLoading here
+        // would trip the page's full-screen loading gate and blank the whole app
+        // mid-switch, so we only do that when the target must be re-connected
+        // over the network (nothing worth keeping on screen while we wait).
         let targetClient = clients.get(accountId);
+        const wasConnected = !!targetClient;
         let targetRestoreRateLimited = false;
 
         if (!targetClient) {
+          // Null out the client immediately so the page doesn't fire data-loading
+          // effects with the old client while stores are being cleared.
+          set({ isLoading: true, client: null, isRateLimited: false, rateLimitUntil: null });
+
+          // Snapshot current account, then clear - there's nothing to keep on
+          // screen during the network round-trip.
+          if (state.activeAccountId) {
+            snapshotAccount(state.activeAccountId);
+          }
+          clearAllStores();
+          useSettingsStore.getState().disableSync();
+
           // Client not connected - try to restore
           try {
             if (targetAccount.authMode === 'oauth') {
@@ -1322,6 +1476,48 @@ export const useAuthStore = create<AuthState>()(
           return;
         }
 
+        // GUARD: verify the connected session actually belongs to the target
+        // account before we bind it. A corrupted slot->token mapping (e.g.
+        // persisted client state left over from an older build, or any future
+        // slot desync) can hand back a *different* account's token; the
+        // connection then succeeds and we would silently show the wrong
+        // mailbox. We accept the session when it matches the stored accountId
+        // OR the server identity captured at this account's login (so a short
+        // login username the server canonicalizes to a full address is still
+        // recognized). On a genuine mismatch, drop the poisoned cookies for
+        // this slot and force a clean re-auth instead of surfacing someone
+        // else's mail.
+        const connectedCandidates = await connectedAccountCandidates(targetClient, targetAccount.serverUrl);
+        const verdict = classifySessionMatch(connectedCandidates, accountId, targetAccount.serverIdentifiers);
+        if (verdict === 'reject') {
+          debug.error(`switchAccount: slot ${targetAccount.cookieSlot} for ${accountId} resolved to [${connectedCandidates.join(", ")}] — forcing re-auth`);
+          clients.delete(accountId);
+          try { targetClient.disconnect(); } catch { /* noop */ }
+          apiFetch(`/api/auth/token?slot=${targetAccount.cookieSlot}`, { method: 'DELETE' }).catch(() => {});
+          apiFetch(`/api/auth/session?slot=${targetAccount.cookieSlot}`, { method: 'DELETE' }).catch(() => {});
+          accountStore.updateAccount(accountId, { isConnected: false, hasError: true, errorMessage: 'session_mismatch' });
+          set({ isLoading: false, error: 'connection_failed', activeAccountId: state.activeAccountId });
+          replaceWindowLocation(getLocaleLoginPath());
+          return;
+        }
+        // Refresh (or, for a legacy 'trust' entry, establish) the identity
+        // baseline now that we've confirmed a good session.
+        if (connectedCandidates.length > 0) {
+          accountStore.updateAccount(accountId, { serverIdentifiers: connectedCandidates });
+        }
+
+        // Seamless path: the outgoing account is still on screen (we deferred
+        // clearing it), so snapshot + clear it now - synchronously, right before
+        // the restore and client swap below - so the UI never blanks between the
+        // two accounts. The network path already snapshotted and cleared above.
+        if (wasConnected) {
+          if (state.activeAccountId) {
+            snapshotAccount(state.activeAccountId);
+          }
+          clearAllStores();
+          useSettingsStore.getState().disableSync();
+        }
+
         // Restore cached state or fetch fresh
         const restored = restoreAccount(accountId);
         accountStore.setActiveAccount(accountId);
@@ -1363,6 +1559,7 @@ export const useAuthStore = create<AuthState>()(
           if (!config.settingsSyncEnabled) return;
           useSettingsStore.getState().loadFromServer(targetAccount.username, targetAccount.serverUrl).finally(() => {
             useSettingsStore.getState().enableSync(targetAccount.username, targetAccount.serverUrl);
+            applyPreferredIdentity(targetAccount.id);
           });
         }).catch(() => {});
       },
@@ -1534,6 +1731,7 @@ export const useAuthStore = create<AuthState>()(
               if (!config.settingsSyncEnabled) return;
               useSettingsStore.getState().loadFromServer(targetAccount.username, targetAccount.serverUrl).finally(() => {
                 useSettingsStore.getState().enableSync(targetAccount.username, targetAccount.serverUrl);
+                applyPreferredIdentity(targetAccount.id);
               });
             }).catch(() => {});
             return;
@@ -1647,6 +1845,7 @@ export const useAuthStore = create<AuthState>()(
                   if (!config.settingsSyncEnabled) return;
                   useSettingsStore.getState().loadFromServer(state.username || '', state.serverUrl!).finally(() => {
                     useSettingsStore.getState().enableSync(state.username || '', state.serverUrl!);
+                    applyPreferredIdentity(accountId);
                   });
                 }).catch(() => {});
                 return;
@@ -1718,6 +1917,7 @@ export const useAuthStore = create<AuthState>()(
                   if (!config.settingsSyncEnabled) return;
                   useSettingsStore.getState().loadFromServer(username, serverUrl).finally(() => {
                     useSettingsStore.getState().enableSync(username, serverUrl);
+                    applyPreferredIdentity(accountId);
                   });
                 }).catch(() => {});
                 return;
@@ -1759,25 +1959,6 @@ export const useAuthStore = create<AuthState>()(
         const identities = identityState.identities;
         const primaryIdentity = identities[0] ?? null;
         set({ identities, primaryIdentity });
-      },
-
-      // Re-sort the already-loaded identities to honor the active account's
-      // synced preferred-primary identity, without a network round-trip. Used
-      // after settings load from the server so a fresh browser reflects the
-      // synced default (#507).
-      applyPreferredIdentityOrdering: () => {
-        const { username, identities } = get();
-        if (!username || identities.length === 0) return;
-        const preferredId = useSettingsStore.getState().preferredIdentityIds?.[username] ?? null;
-        useIdentityStore.setState({ preferredPrimaryId: preferredId });
-        if (!preferredId) return;
-        const idx = identities.findIndex((id) => id.id === preferredId);
-        if (idx <= 0) return; // already first, or not present
-        const reordered = [...identities];
-        const [preferred] = reordered.splice(idx, 1);
-        reordered.unshift(preferred);
-        useIdentityStore.getState().setIdentities(reordered);
-        set({ identities: reordered, primaryIdentity: reordered[0] ?? null });
       },
 
       refreshIdentities: async () => {

@@ -80,10 +80,15 @@ export interface IJMAPClient {
   // ── Emails ────────────────────────────────────────────────────
   // `pinnedFirst` sorts emails carrying the $pinned keyword to the top
   // (server-side hasKeyword sort comparator, RFC 8621), then receivedAt desc.
-  getEmails(mailboxId?: string, accountId?: string, limit?: number, position?: number, hasKeyword?: string, pinnedFirst?: boolean): Promise<{ emails: Email[]; hasMore: boolean; total: number }>;
+  // `extraFilter` is an arbitrary JMAP FilterCondition/FilterOperator ANDed
+  // into the view - used by the message-list category tabs (search-based).
+  getEmails(mailboxId?: string, accountId?: string, limit?: number, position?: number, hasKeyword?: string, pinnedFirst?: boolean, extraFilter?: Record<string, unknown>): Promise<{ emails: Email[]; hasMore: boolean; total: number }>;
   getEmailsInMailbox(mailboxId: string): Promise<Email[]>;
   getEmail(emailId: string, accountId?: string): Promise<Email | null>;
+  getSomeEmails(emailsId: string[], accountId?: string): Promise<Email[]>
   getTagCounts(tagIds: string[]): Promise<Record<string, { total: number; unread: number }>>;
+  /** Per-tab unread counts for message-list category tabs (filter = resolved tab fragment, null = unfiltered). */
+  getCategoryUnreadCounts(mailboxId: string, tabs: Array<{ id: string; filter: Record<string, unknown> | null }>, accountId?: string): Promise<Record<string, number>>;
   searchEmails(query: string, mailboxId?: string, accountId?: string, limit?: number, position?: number): Promise<{ emails: Email[]; hasMore: boolean; total: number }>;
   advancedSearchEmails(
     filter: Record<string, unknown>,
@@ -105,6 +110,9 @@ export interface IJMAPClient {
   toggleStar(emailId: string, starred: boolean, accountId?: string): Promise<void>;
   updateEmailKeywords(emailId: string, keywords: Record<string, boolean>, accountId?: string): Promise<void>;
   setKeyword(emailId: string, keyword: string, accountId?: string): Promise<void>;
+  removeKeyword(emailId: string, keyword: string, accountId?: string): Promise<void>;
+  /** Apply one `keywords/<name>` patch fragment (true=add, null=remove) to many messages in a single Email/set. */
+  batchUpdateKeywords(emailIds: string[], patch: Record<string, boolean | null>, accountId?: string): Promise<void>;
   migrateKeyword(oldKeyword: string, newKeyword: string): Promise<number>;
   deleteEmail(emailId: string, accountId?: string): Promise<void>;
   moveToTrash(emailId: string, trashMailboxId: string, accountId?: string, markAsRead?: boolean): Promise<void>;
@@ -185,9 +193,11 @@ export interface IJMAPClient {
   }): Promise<void>;
 
   sendRawEmail(blob: Blob, identityId: string, sentMailboxId: string, draftMailboxId?: string, delayedUntil?: string, envelopeRecipients?: string[]): Promise<SendEmailResult>;
+  submitRawEmail(blob: Blob, identityId: string, delayedUntil?: string, envelopeRecipients?: string[]): Promise<SendEmailResult>;
   getScheduledEmails(limit?: number, position?: number): Promise<{ emails: ScheduledEmail[]; hasMore: boolean; total: number; nextPosition: number }>;
   cancelEmailSubmission(submissionId: string): Promise<void>;
   rescheduleEmailSubmission(submissionId: string, emailId: string, identityId: string, delayedUntil: string): Promise<SendEmailResult>;
+  /** `sentMailboxId` is accepted for backwards compatibility but ignored: the message is placed in Drafts only. */
   restoreEmailToDraft(emailId: string, draftMailboxId: string, sentMailboxId?: string): Promise<void>;
 
   sendImipReply(opts: {
@@ -222,9 +232,9 @@ export interface IJMAPClient {
   ): Promise<{ blobId: string; size: number; type: string }>;
   getBlobDownloadUrl(blobId: string, name?: string, type?: string, accountId?: string): string;
   fetchBlob(blobId: string, name?: string, type?: string, accountId?: string): Promise<Blob>;
-  fetchBlobAsObjectUrl(blobId: string, name?: string, type?: string): Promise<string>;
-  fetchBlobArrayBuffer(blobId: string, name?: string, type?: string): Promise<ArrayBuffer>;
-  downloadBlob(blobId: string, name?: string, type?: string): Promise<void>;
+  fetchBlobAsObjectUrl(blobId: string, name?: string, type?: string, accountId?: string): Promise<string>;
+  fetchBlobArrayBuffer(blobId: string, name?: string, type?: string, accountId?: string): Promise<ArrayBuffer>;
+  downloadBlob(blobId: string, name?: string, type?: string, accountId?: string): Promise<void>;
 
   // ── Identities ────────────────────────────────────────────────
   getIdentities(): Promise<Identity[]>;

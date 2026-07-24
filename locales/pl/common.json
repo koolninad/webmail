@@ -114,6 +114,7 @@
     "unified_archive": "Wszystkie archiwa",
     "unified_junk": "Wszystkie spam",
     "all_accounts": "Wszystkie konta",
+    "unified_mailbox": "Wspólna skrzynka",
     "expand": "Rozwiń",
     "collapse": "Zwiń",
     "expand_tooltip": "Rozwiń",
@@ -137,7 +138,9 @@
     "scheduled": "Zaplanowane",
     "unified_all_unread": "Wszystkie nieprzeczytane",
     "unified_all_starred": "Wszystkie oznaczone gwiazdką",
-    "unified_all_mail": "Cała poczta"
+    "unified_all_mail": "Cała poczta",
+    "remove_account": "Remove account",
+    "remove_account_confirm": "Remove {account} from this device? You can add it back later."
   },
   "protocol_handlers": {
     "title": "Aplikacje domyślne",
@@ -274,6 +277,8 @@
     "no_subject": "(Bez tematu)",
     "no_body_content": "(Brak treści)",
     "no_preview_available": "Podgląd niedostępny",
+    "show_quoted_text": "Pokaż cytowany tekst",
+    "hide_quoted_text": "Ukryj cytowany tekst",
     "loading_email": "Ładowanie wiadomości...",
     "loading": "Ładowanie...",
     "reply": "Odpowiedz",
@@ -647,7 +652,6 @@
     "continue_draft": "Kontynuuj szkic",
     "close_draft_title": "Zapisać czy odrzucić szkic?",
     "close_draft_message": "Masz niezapisane zmiany. Czy chcesz zapisać jako szkic czy odrzucić?",
-    "save_draft": "Zapisz szkic",
     "smime_sign_on": "Podpisywanie S/MIME włączone",
     "smime_sign_off": "Włącz podpisywanie S/MIME",
     "smime_encrypt_on": "Szyfrowanie S/MIME włączone",
@@ -924,14 +928,16 @@
       "unified_mailbox": {
         "label": "Wspólna skrzynka",
         "description": "Wyświetlaj połączone foldery (Odebrane, Wysłane itp.) ze wszystkich połączonych kont",
+        "cross_account": {
+          "label": "Across all accounts",
+          "description": "Merge the unified mailbox across every connected account instead of staying within the active account."
+        },
         "include_group": {
           "label": "Uwzględnij skrzynki grupowe",
           "description": "Dodaj również udostępnione/grupowe skrzynki do widoku wspólnego."
         }
       },
       "all_mail": {
-        "label": "All Mail",
-        "description": "Show an \"All Mail\" entry above your folders that merges messages from across this account's folders into one list.",
         "folders_label": "Folders in All Mail",
         "folders_description": "Choose which folders are merged into the All Mail view.",
         "account_hint": "Applies to {account}.",
@@ -948,6 +954,10 @@
       "show_folder_total_count": {
         "label": "Pokaż łączną liczbę wiadomości",
         "description": "Pokazuje łączną liczbę wiadomości obok folderów i etykiet, obok liczby nieprzeczytanych. Wyłącz, aby pokazywać tylko nieprzeczytane."
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "Interfejs Pro (eksperymentalny)",
@@ -1109,6 +1119,13 @@
         "trash_and_read": "Przenieś do kosza i oznacz jako przeczytane",
         "permanent": "Usuń trwale",
         "warning": "Wiadomości e-mail zostaną trwale usunięte i nie będzie można ich odzyskać. Ta akcja jest nieodwracalna."
+      },
+      "message_spacing": {
+        "label": "Odstępy wiadomości",
+        "description": "Margines wokół treści wiadomości w czytniku",
+        "auto": "Automatycznie (zalecane)",
+        "always": "Zawsze dodawaj odstępy",
+        "edge": "Od krawędzi do krawędzi"
       },
       "archive_mode": {
         "label": "Archiwizuj w",
@@ -1525,7 +1542,10 @@
         "subject_placeholder": "Poza biurem",
         "body_label": "Treść wiadomości",
         "body_description": "Treść wiadomości w zwykłym tekście",
-        "body_placeholder": "Dziękuję za wiadomość. Obecnie jestem poza biurem i odpowiem po powrocie."
+        "body_placeholder": "Dziękuję za wiadomość. Obecnie jestem poza biurem i odpowiem po powrocie.",
+        "html_label": "Wiadomość sformatowana (HTML)",
+        "html_description": "Dodaj sformatowaną wersję z odnośnikami i stylami. Odbiorcy, których program pocztowy nie może jej wyświetlić, zobaczą powyższy zwykły tekst.",
+        "html_placeholder": "Napisz sformatowaną odpowiedź o nieobecności…"
       },
       "preview": {
         "title": "Podgląd",
@@ -1557,6 +1577,8 @@
       "role_none": "Brak",
       "create_folder": "Utwórz folder",
       "create_subfolder": "Utwórz podfolder",
+      "reorder": "Przeciągnij, aby zmienić kolejność",
+      "reorder_error": "Nie udało się zmienić kolejności folderów",
       "subfolder_of": "W folderze {name}",
       "subfolder_name": "Nazwa podfolderu",
       "new_folder_name": "Nazwa folderu",
@@ -1621,6 +1643,11 @@
         "label": "Skróty klawiszowe",
         "description": "Wyświetl dostępne skróty klawiszowe",
         "button": "Pokaż skróty"
+      },
+      "refresh_cache": {
+        "label": "Refresh cached data",
+        "description": "Reload contacts, calendars, and folders from the server. Keeps your accounts and sessions — fixes a stale or wrong view without signing out.",
+        "button": "Refresh"
       },
       "reset_settings": {
         "label": "Resetuj ustawienia",

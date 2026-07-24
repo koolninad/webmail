@@ -63,6 +63,7 @@
     "jmap_server_auto_picked": "שרת שנבחר מדומיין הדוא״ל שלך."
   },
   "sidebar": {
+    "unified_mailbox": "תיבת דואר מאוחדת",
     "close": "סגור",
     "compose": "כתיבה",
     "compose_hint": "כתיבה (c)",
@@ -136,7 +137,9 @@
     "scheduled": "מתוכננים",
     "unified_all_unread": "הכל שלא נקראו",
     "unified_all_starred": "הכל מסומנים",
-    "unified_all_mail": "הכל דוא״ל"
+    "unified_all_mail": "הכל דוא״ל",
+    "remove_account": "הסרת חשבון",
+    "remove_account_confirm": "להסיר את {account} מהמכשיר הזה? ניתן להוסיף אותו שוב מאוחר יותר."
   },
   "sidebar_apps": {
     "modal_title": "אפליקציות בסרגל הצד",
@@ -475,6 +478,8 @@
     },
     "no_body_content": "(אין תוכן גוף זמין)",
     "no_preview_available": "אין תצוגה מקדימה זמינה",
+    "show_quoted_text": "הצג טקסט מצוטט",
+    "hide_quoted_text": "הסתר טקסט מצוטט",
     "unread": "סמן כלא נקרא",
     "read": "קרא",
     "spam_short": "דואר זבל",
@@ -599,7 +604,6 @@
     "continue_draft": "המשך טיוטה",
     "close_draft_title": "לשמור או למחוק טיוטה?",
     "close_draft_message": "יש לך שינויים שלא נשמרו. האם תרצה לשמור את זה כטיוטה או למחוק אותו?",
-    "save_draft": "שמור טיוטה",
     "smime_sign_on": "חתימת S/MIME מופעלת",
     "smime_sign_off": "אפשר חתימת S/MIME",
     "smime_encrypt_on": "הצפנת S/MIME מופעלת",
@@ -889,14 +893,16 @@
       "unified_mailbox": {
         "label": "תיבת דואר מאוחדת",
         "description": "הצג תיקיות משולבות (דואר נכנס, נשלח וכו׳) בכל החשבונות המחוברים",
+        "cross_account": {
+          "label": "בכל החשבונות",
+          "description": "מזג את תיבת הדואר המאוחדת בכל החשבונות המחוברים במקום להישאר בחשבון הפעיל."
+        },
         "include_group": {
           "label": "כלול תיבות דואר קבוצתיות",
           "description": "גם מזג תיבות דואר משותפות/קבוצתיות לתצוגה המאוחדת."
         }
       },
       "all_mail": {
-        "label": "כל הדוא״ל",
-        "description": "הצג ערך ״כל הדוא״ל״ מעל התיקיות שלך המחברות הודעות מכל תיקיות החשבון לרשימה אחת.",
         "folders_label": "תיקיות בכל הדוא״ל",
         "folders_description": "בחר אילו תיקיות מוזגות לתצוגת כל הדוא״ל.",
         "account_hint": "חל על {account}.",
@@ -913,6 +919,10 @@
       "show_folder_total_count": {
         "label": "הצגת מספר ההודעות הכולל",
         "description": "מציג את מספר ההודעות הכולל לצד תיקיות ותגיות, לצד מספר ההודעות שלא נקראו. כבו כדי להציג רק את מספר ההודעות שלא נקראו."
+      },
+      "favicon_unread_badge": {
+        "label": "Unread Count on Tab Icon",
+        "description": "Show the inbox unread count as a badge on the browser tab icon, so new mail is visible when the tab is not focused. Disable to keep the icon unbadged."
       },
       "pro_interface": {
         "label": "ממשק Pro (ניסיוני)",
@@ -1063,6 +1073,13 @@
         "permanent": "מחק לצמיתות",
         "warning": "הודעות אימייל יימחקו לצמיתות ולא ניתן לשחזר אותן. פעולה זו היא בלתי הפיכה.",
         "trash_and_read": "העבר לאשפה וסמן כקרא"
+      },
+      "message_spacing": {
+        "label": "מרווח סביב ההודעה",
+        "description": "ריווח מסביב לגוף ההודעה בתצוגת הקריאה",
+        "auto": "אוטומטי (מומלץ)",
+        "always": "תמיד להוסיף מרווח",
+        "edge": "מקצה לקצה"
       },
       "archive_mode": {
         "label": "ארכיון ב",
@@ -1490,7 +1507,10 @@
         "subject_placeholder": "מחוץ למשרד",
         "body_label": "גוף ההודעה",
         "body_description": "תוכן הודעת טקסט רגילה",
-        "body_placeholder": "תודה על המייל שלך. אני כרגע מחוץ למשרד ואענה כשאחזור."
+        "body_placeholder": "תודה על המייל שלך. אני כרגע מחוץ למשרד ואענה כשאחזור.",
+        "html_label": "הודעה מעוצבת (HTML)",
+        "html_description": "הוסיפו גרסה מעוצבת עם קישורים וסגנון. נמענים שתוכנת הדוא״ל שלהם אינה יכולה להציג אותה יראו את הטקסט הרגיל שלמעלה.",
+        "html_placeholder": "כתבו תשובת היעדרות מעוצבת…"
       },
       "preview": {
         "title": "תצוגה מקדימה",
@@ -1513,7 +1533,7 @@
       "standard_roles": "תפקידי תיקייה סטנדרטיים",
       "standard_roles_description": "הקצה אילו תיקיות משמשות לתפקידי תיבת דואר סטנדרטיים כמו Inbox, Sent, Trash וכו׳.",
       "role_inbox": "תיבת דואר נכנס",
-      "role_drafts": "דַמקָה",
+      "role_drafts": "טיוטות",
       "role_sent": "נשלח",
       "role_trash": "אַשׁפָּה",
       "role_junk": "ספאם / זבל",
@@ -1521,6 +1541,8 @@
       "role_none": "אין",
       "create_folder": "צור תיקיה",
       "create_subfolder": "צור תיקיית משנה",
+      "reorder": "גרור לשינוי הסדר",
+      "reorder_error": "שינוי סדר התיקיות נכשל",
       "subfolder_of": "בתוך{name}",
       "subfolder_name": "שם תיקיית משנה",
       "new_folder_name": "שם התיקיה",
@@ -1583,6 +1605,11 @@
         "label": "קיצורי מקלדת",
         "description": "הצג קיצורי מקשים זמינים",
         "button": "הצג קיצורי דרך"
+      },
+      "refresh_cache": {
+        "label": "רענון נתונים שמורים",
+        "description": "טעינה מחדש של אנשי קשר, לוחות שנה ותיקיות מהשרת. שומר על החשבונות וההתחברויות שלך — מתקן תצוגה מיושנת או שגויה ללא התנתקות.",
+        "button": "רענון"
       },
       "reset_settings": {
         "label": "אפס את ההגדרות",
