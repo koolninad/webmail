@@ -305,6 +305,7 @@ export type SlotName =
   | 'navigation-rail-bottom'
   | 'calendar-event-actions'
   | 'admin-plugin-page'
+  | 'contact-cryptokeys'
   // Full-view slot rendered in place of the built-in file preview when a
   // plugin has claimed the opened file's extension via fileViewerExtensions.
   // The host passes the opened file as extraProps.file (FileViewerTarget).
@@ -1072,7 +1073,7 @@ export const ALL_PERMISSIONS = [
   'auth:emit',
   'account:read',
   'http:post', 'http:fetch',
-  'ui:observe', 'ui:toolbar', 'ui:app-top-banner', 'ui:email-banner', 'ui:email-footer',
+  'ui:observe', 'ui:toolbar', 'ui:app-top-banner', 'ui:email-banner', 'ui:email-footer', 'ui:contact-cryptokeys',
   'ui:email-details',
   'ui:download-file',
   // Register native message-list category tabs (Gmail-style inbox tabs).
