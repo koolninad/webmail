@@ -320,6 +320,29 @@ export function FlagSK(props: FlagProps) {
   );
 }
 
+/** India – Saffron, White, Green horizontal with the Ashoka Chakra */
+export function FlagIN(props: FlagProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" width={W} height={H} className={flagClass} {...props}>
+      <rect width="900" height="200" fill="#FF9933" />
+      <rect y="200" width="900" height="200" fill="#fff" />
+      <rect y="400" width="900" height="200" fill="#138808" />
+      <circle cx="450" cy="300" r="90" fill="none" stroke="#000080" strokeWidth="16" />
+      <circle cx="450" cy="300" r="17" fill="#000080" />
+      {/* 24 spokes, drawn as a single dashed circle so the markup stays small */}
+      <circle
+        cx="450"
+        cy="300"
+        r="45"
+        fill="none"
+        stroke="#000080"
+        strokeWidth="82"
+        strokeDasharray="4 7.78"
+      />
+    </svg>
+  );
+}
+
 /** Map locale codes to flag components */
 export const flagComponents: Record<string, (props: FlagProps) => ReactElement> = {
   ca: FlagCAT,
@@ -346,4 +369,8 @@ export const flagComponents: Record<string, (props: FlagProps) => ReactElement> 
   fa: FlagIR,
   he: FlagIL,
   ar: FlagAE,
+  // Hindi and Marathi are both languages of India; there is no separate
+  // national flag to distinguish them, and the native labels already do.
+  hi: FlagIN,
+  mr: FlagIN,
 };

@@ -33,6 +33,8 @@ const languages = [
   { value: 'ko', label: '한국어' },
   { value: 'ja', label: '日本語' },
   { value: 'zh', label: '简体中文' },
+  { value: 'hi', label: 'हिन्दी' },
+  { value: 'mr', label: 'मराठी' },
 ];
 
 function FlagIcon({ locale }: { locale: string }) {
