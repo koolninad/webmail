@@ -122,7 +122,8 @@
     "mobile": {
       "search": "Keresés",
       "compose": "Új levél",
-      "go_back": "Vissza"
+      "go_back": "Vissza",
+      "toggle_menu": "Menü be/ki"
     },
     "clear_search": "Keresés törlése",
     "vacation_active": "Automatikus válasz aktív",
@@ -130,6 +131,8 @@
     "demo_reset": "Visszaállítás",
     "demo_tour": "Bemutató",
     "tags": "Címkék",
+    "show_all_tags": "Összes megjelenítése ({count})",
+    "show_fewer_tags": "Kevesebb megjelenítése",
     "folders": "Mappák",
     "shared": "Megosztott",
     "mail": "Levelek",
@@ -298,6 +301,7 @@
     "print": "Nyomtatás",
     "view_source": "Forrás megtekintése",
     "export_email": "Exportálás .eml-ként",
+    "forward_as_attachment": "Forward as attachment",
     "import_email": "Importálás .eml vagy .zip fájlból",
     "keyboard_shortcuts": "Billentyűparancsok (?)",
     "email_source": "E-mail forrás",
@@ -324,13 +328,15 @@
     "view_contact": "Névjegy megtekintése",
     "message_details": "Üzenet részletei",
     "more_reply_options": "További válasz opciók",
-    "set_color": "Címke beállítása",
+    "set_tag": "Címke beállítása",
     "tag": "Címke",
     "more_actions": "További műveletek",
     "previous": "Előző",
     "next": "Következő",
     "move_to": "Áthelyezés ide...",
-    "remove_color": "Címke eltávolítása",
+    "remove_tag": "Címke eltávolítása",
+    "tag_filter_placeholder": "Címkék szűrése",
+    "tag_no_matches": "Nincs találat a címkék közt",
     "more_count": "+{count} további",
     "characters_count": "{count} karakter",
     "quick_reply_placeholder": "Gyors válasz írása...",
@@ -423,17 +429,6 @@
       "received": "Fogadva",
       "message_id": "Üzenet azonosító",
       "list_info": "Lista információk"
-    },
-    "color_tag": {
-      "title": "Színes címke",
-      "red": "Piros",
-      "orange": "Narancs",
-      "yellow": "Sárga",
-      "green": "Zöld",
-      "blue": "Kék",
-      "purple": "Lila",
-      "pink": "Rózsaszín",
-      "none": "Nincs"
     },
     "tooltips": {
       "reply": "Válasz (r)",
@@ -641,7 +636,6 @@
     "save_as_template": "Mentés sablonként",
     "validation": {
       "recipient_required": "Adj meg egy címzettet a küldéshez",
-      "subject_required": "Adj meg egy tárgyat",
       "body_required": "Írj üzenetet vagy csatolj fájlt",
       "attachments_uploading": "A mellékletek még feltöltés alatt vannak – küldés a feltöltés befejezése után",
       "attachment_upload_failed": "Nincs elküldve - egy melléklet feltöltése nem sikerült. Távolítsa el, és próbálja újra."
@@ -652,6 +646,7 @@
     "drop_files": "Fájlok ejtése a csatoláshoz",
     "show_less": "Kevesebb mutatása",
     "send_failed": "Nem sikerült elküldeni az e-mailt",
+    "send_timeout": "A kiszolgáló nem válaszol többé. Újraküldés előtt ellenőrizze az Elküldött mappát – az üzenet lehet, hogy már kiment.",
     "continue_draft": "Piszkozat folytatása",
     "close_draft_title": "Piszkozat mentése vagy elvetése?",
     "close_draft_message": "Nem mentett változtatások vannak. Szeretnéd piszkozatként menteni vagy elvetni?",
@@ -670,6 +665,13 @@
       "send_anyway": "Küldés így is",
       "back": "Vissza a szerkesztéshez"
     },
+    "empty_subject": {
+      "title": "Küldés tárgy nélkül?",
+      "message": "Ennek az üzenetnek nincs tárgya. Mégis elküldi?",
+      "dont_ask_again": "Ne kérdezze többé",
+      "send_anyway": "Küldés így is",
+      "back": "Vissza a szerkesztéshez"
+    },
     "schedule_send": "Késleltetett küldés",
     "schedule_send_description": "Válaszd ki, mikor küldje el a szerver az üzenetet.",
     "schedule_send_required": "Válassz dátumot és időpontot.",
@@ -685,7 +687,40 @@
     "recipient_email_placeholder": "E-mail-cím",
     "recipient_name_placeholder": "Megjelenített név",
     "autocomplete_search_server": "Keresés a kiszolgálón",
-    "autocomplete_searching": "Keresés..."
+    "autocomplete_searching": "Keresés...",
+    "toolbar": {
+      "bold": "Félkövér",
+      "italic": "Dőlt",
+      "underline": "Aláhúzott",
+      "strikethrough": "Áthúzott",
+      "text_color": "Betűszín",
+      "remove_color": "Szín eltávolítása",
+      "heading_1": "Címsor 1",
+      "heading_2": "Címsor 2",
+      "bullet_list": "Felsorolás",
+      "ordered_list": "Számozott lista",
+      "quote": "Idézet",
+      "code_block": "Kódblokk",
+      "align_left": "Balra igazítás",
+      "align_center": "Középre igazítás",
+      "align_right": "Jobbra igazítás",
+      "text_direction": "Szövegirány (RTL/LTR)",
+      "link": "Hivatkozás",
+      "table": "Táblázat",
+      "clear_formatting": "Formázás törlése",
+      "undo": "Visszavonás",
+      "redo": "Újra",
+      "add_row_above": "Sor beszúrása fölé",
+      "add_row_below": "Sor beszúrása alá",
+      "add_column_before": "Oszlop beszúrása elé",
+      "add_column_after": "Oszlop beszúrása mögé",
+      "delete_row": "Sor törlése",
+      "delete_column": "Oszlop törlése",
+      "toggle_header_row": "Fejlécsor váltása",
+      "delete_table": "Táblázat törlése",
+      "pick_size": "Méret kiválasztása"
+    },
+    "send_filing_warning": "Elküldve - de az utólagos rendrakás nem sikerült, egy elavult piszkozat megmaradhat."
   },
   "confirm_dialog": {
     "confirm": "Megerősítés",
@@ -985,7 +1020,6 @@
       "title": "E-mail címkék",
       "description": "Címkék definiálása az e-mailek színekkel történő rendezéséhez. Ezek JMAP kulcsszavakként tárolódnak a szerveren.",
       "add_keyword": "Címke hozzáadása",
-      "reset_defaults": "Alapértelmezettek visszaállítása",
       "label_field": "Megjelenített név",
       "label_placeholder": "pl. Munka, Személyes, Sürgős",
       "id_field": "Címke azonosító",
@@ -998,7 +1032,34 @@
       "add": "Hozzáadás",
       "cancel": "Mégse",
       "migrating": "Címke frissítése a meglévő e-maileken...",
-      "migration_error": "Nem sikerült frissíteni a címkét a meglévő e-maileken"
+      "migration_error": "Nem sikerült frissíteni a címkét a meglévő e-maileken",
+      "nesting": {
+        "label": "Beágyazott címkék",
+        "description": "Ágyazzon címkéket más címkék alá, és jelenítse meg őket fastruktúraként az oldalsávon."
+      },
+      "parent_field": "Szülőcímke",
+      "no_parent": "Nincs szülőcímke",
+      "too_long": "Ez a címkeútvonal túl hosszú (legfeljebb {max} karakter)",
+      "has_children_locked": "Más címkék vannak beágyazva ez alá, ezért a neve és a szülőcímkéje zárolva van. Előbb helyezze át vagy távolítsa el őket.",
+      "has_children_delete": "Előbb távolítsa el az ez alá beágyazott címkéket",
+      "visibility_field": "Láthatóság az oldalsávon",
+      "visibility": {
+        "show": "Megjelenítés",
+        "unread": "Megjelenítés olvasatlanoknál",
+        "hide": "Elrejtés"
+      },
+      "unrecognized": {
+        "title": "Címkék helyreállítása a szerverről",
+        "description": "A címkék nevét és színét ez a böngésző tárolja, maguk a címkék azonban JMAP kulcsszavakként az e-mailjein vannak. Keresse meg a levelein azokat a kulcsszavakat, amelyekhez itt nem tartozik címke, majd adja hozzá őket újra.",
+        "scan": "Címkék keresése",
+        "rescan": "Keresés újra",
+        "scanning": "Keresés… {total} e-mailből {scanned}",
+        "none": "Az e-mailjein szereplő összes címke már definiálva van itt.",
+        "messages": "{count, plural, one {# e-mail} other {# e-mail}}",
+        "add_all": "Mind a(z) {count} hozzáadása",
+        "partial": "A(z) {total} e-mailből csak a {scanned} legutóbbi lett átvizsgálva. A csak régebbi leveleken használt címkék hiányozhatnak.",
+        "error": "Nem sikerült átvizsgálni a leveleket címkék után."
+      }
     },
     "notifications": {
       "test_sound": "Értesítési hang tesztelése",
@@ -1026,6 +1087,7 @@
         "disable": "Letiltás",
         "confirm_disable_title": "Háttérértesítések letiltása?",
         "confirm_disable_message": "Ez az eszköz nem fog figyelmeztetéseket kapni, amikor az oldal be van zárva.",
+        "dismiss_aria": "Értesítési ablak elutasítása",
         "ios_hint": "iOS-en először telepítsd az oldalt a kezdőképernyőre - a Safari csak telepített PWA-knak kézbesít Web Push értesítéseket."
       },
       "sound_selection": {
@@ -1277,6 +1339,10 @@
         "add": "Hozzáadás",
         "remove": "Eltávolítás"
       },
+      "empty_subject_warning": {
+        "label": "Figyelmeztetés üres tárgy esetén",
+        "description": "Megerősítés kérése tárgy nélküli üzenet küldése előtt."
+      },
       "hide_inline_image_attachments": {
         "label": "Beágyazott képek elrejtése a csatolmányok közül",
         "description": "Az üzenet törzsébe ágyazott képek nem jelennek meg külön csatolmányként"
@@ -1478,7 +1544,16 @@
         "inactive": "Letiltva",
         "enabled": "Titkosítás nyugalmi állapotban engedélyezve",
         "disabled_success": "Titkosítás nyugalmi állapotban letiltva",
-        "error": "Nem sikerült frissíteni a titkosítási beállításokat"
+        "error": "Nem sikerült frissíteni a titkosítási beállításokat",
+        "algorithm_label": "Titkosítási algoritmus",
+        "encrypt_on_append": "Új e-mailek titkosítása feltöltéskor",
+        "allow_spam_training": "Spam-tanítás engedélyezése az e-mailek titkosítása előtt",
+        "enable_encryption": "Titkosítás engedélyezése",
+        "enable_tooltip": "Titkosítás engedélyezése ezzel a kulccsal",
+        "configure_title": "Titkosítás engedélyezése ezzel a kulccsal",
+        "enable_button": "Engedélyezés",
+        "disable_tooltip": "Titkosítás letiltása",
+        "enabled_success": "Titkosítás nyugalmi állapotban engedélyezve"
       },
       "email_client": {
         "title": "E-mail kliens beállítás",
@@ -1498,6 +1573,13 @@
         "expired": "Ez a kód lejárt.",
         "generating": "Generálás…",
         "error": "Nem sikerült párosítási kódot létrehozni. Próbáld újra."
+      },
+      "public_keys": {
+        "name_label": "Nyilvános kulcs neve",
+        "name_placeholder": "pl. A kulcsom",
+        "key_label": "Nyilvános kulcs (S/MIME vagy PGP ASCII formátumban)",
+        "key_placeholder": "Illessze be ide a nyilvános kulcsát",
+        "none": "Nincs beállítva nyilvános kulcs"
       }
     },
     "identities": {
@@ -2000,8 +2082,7 @@
     "delete": "Törlés",
     "mark_as_spam": "Spam jelentése",
     "not_spam": "Nem spam",
-    "color_tag": "Címke",
-    "remove_color": "Címke eltávolítása",
+    "tag": "Címke",
     "items_selected": "{count} e-mail kijelölve",
     "edit_draft": "Piszkozat szerkesztése",
     "cancel_scheduled_send": "Küldés megszakítása",
@@ -2336,6 +2417,9 @@
       "section_address_book": "Címtár",
       "select_address_book": "Címtár kiválasztása...",
       "section_identity": "Név és azonosság",
+      "contact_type": "Névjegy típusa",
+      "type_person": "Személy",
+      "type_organization": "Szervezet",
       "section_work": "Munka és szervezet",
       "prefix": "Előtag",
       "prefix_placeholder": "Dr., Úr., Mrs.",
@@ -2420,7 +2504,7 @@
       "cancel": "Mégse",
       "creating": "Létrehozás...",
       "updating": "Frissítés...",
-      "name_required": "Legalább a keresztnév vagy vezetéknév megadása kötelező",
+      "name_required": "Adjon meg egy keresztnevet, vezetéknevet vagy szervezetet",
       "email_invalid": "Kérjük, adj meg egy érvényes e-mail címet",
       "email_error_inline": "Érvénytelen e-mail formátum",
       "save_failed": "Nem sikerült menteni a névjegyet",
@@ -3282,5 +3366,18 @@
     "install": "Telepítés",
     "dont_remind": "Ne emlékeztess többet",
     "dismiss_aria": "Telepítési ablak elutasítása"
+  },
+  "deep_link": {
+    "message_not_found": "Ez az üzenet már nem érhető el.",
+    "thread_not_found": "Ez a beszélgetés már nem érhető el.",
+    "folder_not_found": "Ez a mappa már nem érhető el.",
+    "event_not_found": "Ez az esemény már nem érhető el.",
+    "file_not_found": "Ez a fájl már nem érhető el.",
+    "account_unavailable": "Jelentkezz be ebbe a fiókba a link megnyitásához.",
+    "copy_message": "Üzenet linkjének másolása",
+    "copy_conversation": "Beszélgetés linkjének másolása",
+    "copy_event": "Esemény linkjének másolása",
+    "copied": "Link másolva",
+    "copy_failed": "Nem sikerült másolni a linket"
   }
 }

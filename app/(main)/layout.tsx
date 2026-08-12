@@ -5,11 +5,13 @@ import { headers } from "next/headers";
 import { getLocale, getTranslations } from "next-intl/server";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
 import { FaviconBadge } from "@/components/favicon-badge";
+import { ThemeColorSync } from "@/components/theme-color-sync";
 import { configManager } from "@/lib/admin/config-manager";
 import {
   matchDomainBranding,
   parseDomainBranding,
   pickRequestHost,
+  type BrandingOverrideKey,
 } from "@/lib/admin/domain-branding";
 import { withBasePath } from "@/lib/browser-navigation";
 import { locales } from "@/i18n/routing";
@@ -37,11 +39,46 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  viewportFit: "cover",
-};
+// Resolve a branding value for the requesting host: per-domain override first,
+// then the global admin/env/default value (same precedence as app/manifest.ts).
+async function brandedValue(key: BrandingOverrideKey, fallback: string): Promise<string> {
+  const host = pickRequestHost(await headers());
+  const override = matchDomainBranding(
+    host,
+    parseDomainBranding(configManager.get<unknown>("domainBranding", [])),
+  )[key];
+  if (typeof override === "string" && override.length > 0) return override;
+  return configManager.get<string>(key, fallback);
+}
+
+/**
+ * Whether an admin explicitly set a PWA theme colour (per-domain override, or
+ * an admin/env value rather than the built-in default). When they have, it wins
+ * outright; when they haven't, <ThemeColorSync /> tracks the active theme.
+ */
+async function hasExplicitThemeColor(): Promise<boolean> {
+  const host = pickRequestHost(await headers());
+  const override = matchDomainBranding(
+    host,
+    parseDomainBranding(configManager.get<unknown>("domainBranding", [])),
+  ).pwaThemeColor;
+  if (typeof override === "string" && override.length > 0) return true;
+  return configManager.getAllWithSources().pwaThemeColor?.source !== "default";
+}
+
+export async function generateViewport(): Promise<Viewport> {
+  await configManager.ensureLoaded();
+  // Chromium uses <meta name="theme-color"> in preference to the manifest's
+  // theme_color when coloring an installed desktop PWA's title bar, so a
+  // hardcoded value here silently overrode the admin setting (#671). Emit the
+  // configured colour instead, honoring per-domain branding like the manifest.
+  return {
+    width: "device-width",
+    initialScale: 1,
+    viewportFit: "cover",
+    themeColor: (await brandedValue("pwaThemeColor", "")) || "#ffffff",
+  };
+}
 
 export async function generateMetadata(): Promise<Metadata> {
   await configManager.ensureLoaded();
@@ -49,15 +86,7 @@ export async function generateMetadata(): Promise<Metadata> {
   // /api/config, app/manifest.ts, and /api/pwa-icon already do. Resolve the
   // request host and prefer its override; fall back to the global
   // admin/env/default value when the host has no favicon override (#585).
-  const host = pickRequestHost(await headers());
-  const domainOverride = matchDomainBranding(
-    host,
-    parseDomainBranding(configManager.get<unknown>("domainBranding", [])),
-  ).faviconUrl;
-  const faviconUrl =
-    domainOverride && domainOverride.length > 0
-      ? domainOverride
-      : configManager.get<string>("faviconUrl", "/branding/Bulwark_Favicon.svg");
+  const faviconUrl = await brandedValue("faviconUrl", "/branding/Bulwark_Favicon.svg");
   // Localize the <head> description to match the UI language; a hardcoded
   // English description is another signal that makes Chrome offer to
   // "translate this page". Resolve the locale from the request path, since this
@@ -90,14 +119,15 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  await configManager.ensureLoaded();
   const locale = await resolveRequestLocale();
   const nonce = (await headers()).get("x-nonce") ?? "";
   const parentOrigin = process.env.NEXT_PUBLIC_PARENT_ORIGIN || "";
+  const themeColorConfigured = await hasExplicitThemeColor();
 
   return (
     <html lang={locale} dir={getLocaleDirection(locale)} suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#ffffff" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta
@@ -133,6 +163,7 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ServiceWorkerRegistration />
+        {!themeColorConfigured && <ThemeColorSync />}
         <FaviconBadge />
         {children}
       </body>

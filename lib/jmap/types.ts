@@ -95,6 +95,12 @@ export interface SendEmailResult {
   emailSubmissionId?: string;
   sendAt?: string;
   isSmime?: boolean;
+  /**
+   * Set when the submission succeeded but a post-send step was rejected
+   * (the implicit onSuccessUpdateEmail filing patch, or destroying the
+   * old draft). The mail left the server - callers should warn, not fail.
+   */
+  filingError?: string;
 }
 
 export interface ScheduledEmail extends Email {
@@ -829,7 +835,11 @@ export interface FileNode {
   blobId: string | null;
   size: number;
   created: string;
-  updated: string;
+  // Last content/metadata change, server-maintained. The property is named
+  // `modified` in draft-ietf-jmap-filenode and in Stalwart - there is no
+  // `updated` on a FileNode. Asking for the wrong name silently yields
+  // undefined, which made the UI show the creation date forever (#700).
+  modified: string;
   // JMAP Sharing (RFC 9670). Populated only when the server advertises the
   // filenode capability and the properties are explicitly requested. A node is
   // shared-out when `shareWith` has entries; `myRights` describes what the

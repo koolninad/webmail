@@ -122,7 +122,8 @@
     "mobile": {
       "search": "Meklēt",
       "compose": "Rakstīt",
-      "go_back": "Atpakaļ"
+      "go_back": "Atpakaļ",
+      "toggle_menu": "Pārslēgt izvēlni"
     },
     "clear_search": "Notīrīt meklēšanu",
     "vacation_active": "Atvaļinājuma atbilde ir aktīva",
@@ -130,6 +131,8 @@
     "demo_reset": "Atiestatīt",
     "demo_tour": "Ekskursija",
     "tags": "Tagi",
+    "show_all_tags": "Rādīt visus ({count})",
+    "show_fewer_tags": "Rādīt mazāk",
     "folders": "Mapes",
     "mail": "Pasts",
     "nav_label": "Navigācija",
@@ -298,6 +301,7 @@
     "print": "Drukāt",
     "view_source": "Skatīt avota kodu",
     "export_email": "Eksportēt kā .eml",
+    "forward_as_attachment": "Forward as attachment",
     "import_email": "Importēt .eml vai .zip",
     "keyboard_shortcuts": "Īsinājumtaustiņi (?)",
     "email_source": "Vēstules avota kods",
@@ -324,13 +328,15 @@
     "view_contact": "Skatīt kontaktu",
     "message_details": "Informācija par ziņojumu",
     "more_reply_options": "Papildu atbildēšanas iespējas",
-    "set_color": "Iestatīt tagu",
+    "set_tag": "Iestatīt tagu",
     "tag": "Tags",
     "more_actions": "Citas darbības",
     "previous": "Iepr.",
     "next": "Nāk.",
     "move_to": "Pārvietot uz...",
-    "remove_color": "Noņemt tagu",
+    "remove_tag": "Noņemt tagu",
+    "tag_filter_placeholder": "Filtrēt tagus",
+    "tag_no_matches": "Nav atbilstošu tagu",
     "more_count": "+vairāk {count}",
     "characters_count": "{count} rakstzīmes",
     "quick_reply_placeholder": "Rakstīt ātru atbildi...",
@@ -398,17 +404,6 @@
       "received": "Saņemts",
       "message_id": "Ziņojuma ID",
       "list_info": "Informācija par adresātu sarakstu"
-    },
-    "color_tag": {
-      "title": "Krāsu tags",
-      "red": "Sarkans",
-      "orange": "Oranžs",
-      "yellow": "Dzeltens",
-      "green": "Zaļš",
-      "blue": "Zils",
-      "purple": "Violets",
-      "pink": "Rozā",
-      "none": "Nav"
     },
     "tooltips": {
       "reply": "Atbildēt (r)",
@@ -638,7 +633,6 @@
     "save_as_template": "Saglabāt kā veidni",
     "validation": {
       "recipient_required": "Norādiet vismaz vienu saņēmēju",
-      "subject_required": "Norādiet tematu",
       "body_required": "Ierakstiet ziņojumu vai pievienojiet failu",
       "attachments_uploading": "Pielikumi joprojām tiek augšupielādēti — nosūtīs, tiklīdz tas pabeigts",
       "attachment_upload_failed": "Nav nosūtīts - pielikumu neizdevās augšupielādēt. Noņemiet to un mēģiniet vēlreiz."
@@ -649,6 +643,7 @@
     "drop_files": "Velciet failus šeit, lai pievienotu",
     "show_less": "Rādīt mazāk",
     "send_failed": "Neizdevās nosūtīt vēstuli",
+    "send_timeout": "Serveris pārstāja atbildēt. Pirms sūtīt vēlreiz, pārbaudiet mapi Nosūtītie — ziņojums, iespējams, jau ir aizsūtīts.",
     "continue_draft": "Turpināt melnrakstu",
     "close_draft_title": "Saglabāt vai atmest melnrakstu?",
     "close_draft_message": "Ir nesaglabātas izmaiņas. Vai vēlaties saglabāt kā melnrakstu vai atmest?",
@@ -664,6 +659,13 @@
     "forgot_attachment": {
       "title": "Vai aizmirsāt pielikumu?",
       "message": "Jūsu ziņojumā minēts \"{keyword}\", bet nav pievienots neviens fails. Vai tomēr sūtīt?",
+      "send_anyway": "Sūtīt tik un tā",
+      "back": "Atpakaļ pie rediģēšanas"
+    },
+    "empty_subject": {
+      "title": "Sūtīt bez temata?",
+      "message": "Šai ziņai nav temata. Vai tomēr sūtīt?",
+      "dont_ask_again": "Vairs nejautāt",
       "send_anyway": "Sūtīt tik un tā",
       "back": "Atpakaļ pie rediģēšanas"
     },
@@ -685,7 +687,40 @@
     "recipient_email_placeholder": "E-pasta adrese",
     "recipient_name_placeholder": "Parādāmais vārds",
     "autocomplete_search_server": "Meklēt serverī",
-    "autocomplete_searching": "Meklē..."
+    "autocomplete_searching": "Meklē...",
+    "toolbar": {
+      "bold": "Treknraksts",
+      "italic": "Kursīvs",
+      "underline": "Pasvītrots",
+      "strikethrough": "Pārsvītrots",
+      "text_color": "Teksta krāsa",
+      "remove_color": "Noņemt krāsu",
+      "heading_1": "Virsraksts 1",
+      "heading_2": "Virsraksts 2",
+      "bullet_list": "Aizzīmju saraksts",
+      "ordered_list": "Numurēts saraksts",
+      "quote": "Citāts",
+      "code_block": "Koda bloks",
+      "align_left": "Līdzināt pa kreisi",
+      "align_center": "Centrēt",
+      "align_right": "Līdzināt pa labi",
+      "text_direction": "Teksta virziens (RTL/LTR)",
+      "link": "Saite",
+      "table": "Tabula",
+      "clear_formatting": "Notīrīt formatējumu",
+      "undo": "Atsaukt",
+      "redo": "Atkārtot",
+      "add_row_above": "Pievienot rindu virs",
+      "add_row_below": "Pievienot rindu zem",
+      "add_column_before": "Pievienot kolonnu pirms",
+      "add_column_after": "Pievienot kolonnu pēc",
+      "delete_row": "Dzēst rindu",
+      "delete_column": "Dzēst kolonnu",
+      "toggle_header_row": "Pārslēgt galvenes rindu",
+      "delete_table": "Dzēst tabulu",
+      "pick_size": "Izvēlēties izmēru"
+    },
+    "send_filing_warning": "Nosūtīts - bet pēcapstrāde neizdevās, var palikt novecojis melnraksts."
   },
   "confirm_dialog": {
     "confirm": "Apstiprināt",
@@ -982,7 +1017,6 @@
       "title": "E-pasta tagi",
       "description": "Definējiet tagus, lai organizētu e-pastus ar krāsām. Tie tiek saglabāti kā JMAP atslēgvārdi serverī.",
       "add_keyword": "Pievienot tagu",
-      "reset_defaults": "Atiestatīt noklusējumu",
       "label_field": "Redzamais nosaukums",
       "label_placeholder": "piem., Darbs, Personīgi, Steidzami",
       "id_field": "Taga identifikators",
@@ -995,7 +1029,34 @@
       "add": "Pievienot",
       "cancel": "Atcelt",
       "migrating": "Taga atjaunināšana esošajos e-pastos…",
-      "migration_error": "Neizdevās atjaunināt tagu esošajos e-pastos"
+      "migration_error": "Neizdevās atjaunināt tagu esošajos e-pastos",
+      "nesting": {
+        "label": "Ligzdoti tagi",
+        "description": "Ligzdojiet tagus zem citiem tagiem un rādiet tos sānjoslā kā koku."
+      },
+      "parent_field": "Vecāktags",
+      "no_parent": "Nav vecāktaga",
+      "too_long": "Šis taga ceļš ir pārāk garš (ne vairāk kā {max} rakstzīmes)",
+      "has_children_locked": "Zem šī taga ir ligzdoti citi tagi, tāpēc tā nosaukums un vecāktags ir bloķēti. Vispirms pārvietojiet vai noņemiet tos.",
+      "has_children_delete": "Vispirms noņemiet zem šī ligzdotos tagus",
+      "visibility_field": "Redzamība sānjoslā",
+      "visibility": {
+        "show": "Rādīt",
+        "unread": "Rādīt, ja ir nelasīti",
+        "hide": "Slēpt"
+      },
+      "unrecognized": {
+        "title": "Atgūt tagus no servera",
+        "description": "Tagu nosaukumi un krāsas tiek glabāti šajā pārlūkā, bet paši tagi atrodas jūsu vēstulēs kā JMAP atslēgvārdi. Pārmeklējiet pastu, lai atrastu atslēgvārdus, kuriem šeit nav taga, un pievienojiet tos atpakaļ.",
+        "scan": "Meklēt tagus",
+        "rescan": "Meklēt vēlreiz",
+        "scanning": "Notiek meklēšana… {scanned} no {total} vēstulēm",
+        "none": "Visi jūsu vēstulēs esošie tagi jau ir definēti šeit.",
+        "messages": "{count, plural, one {# vēstule} other {# vēstules}}",
+        "add_all": "Pievienot visus ({count})",
+        "partial": "Tika pārmeklētas tikai {scanned} jaunākās no {total} vēstulēm. Tagi, kas izmantoti tikai vecākās vēstulēs, var nebūt atrasti.",
+        "error": "Neizdevās pārmeklēt pastu, lai atrastu tagus."
+      }
     },
     "notifications": {
       "test_sound": "Pārbaudīt paziņojuma skaņu",
@@ -1036,6 +1097,7 @@
         "description": "Saņem sistēmas paziņojumus par jaunu pastu, kad šī vietne ir aizvērta. Piegādāts caur Bulwark push releju; relejs nekad neredz pasta saturu.",
         "disable": "Atspējot",
         "enable": "Iespējot",
+        "dismiss_aria": "Aizvērt paziņojumu uzaicinājumu",
         "ios_hint": "Operētājsistēmā iOS vispirms instalējiet vietni sākuma ekrānā – Safari piegādā Web Push tikai instalētajām PWA.",
         "reenable": "Reģistrēt vēlreiz",
         "relay_desc": "Pēc noklusējuma izmanto izmitināto Bulwark releju. Mainiet tikai tad, ja izmitināt pats.",
@@ -1274,6 +1336,10 @@
         "add": "Add",
         "remove": "Noņemt"
       },
+      "empty_subject_warning": {
+        "label": "Brīdinājums par tukšu tematu",
+        "description": "Pieprasīt apstiprinājumu pirms ziņas sūtīšanas bez temata."
+      },
       "hide_inline_image_attachments": {
         "label": "Slēpt iegultos attēlus no pielikumu saraksta",
         "description": "Ziņojuma pamattekstā iegultie attēli netiek rādīti kā atsevišķi pielikumi"
@@ -1475,7 +1541,16 @@
         "inactive": "Izslēgta",
         "enabled": "Krātuves šifrēšana ir iespējota",
         "disabled_success": "Krātuves šifrēšana ir izslēgta",
-        "error": "Neizdevās atjaunināt šifrēšanas iestatījumus"
+        "error": "Neizdevās atjaunināt šifrēšanas iestatījumus",
+        "algorithm_label": "Šifrēšanas algoritms",
+        "encrypt_on_append": "Šifrēt jaunās vēstules to augšupielādes laikā",
+        "allow_spam_training": "Atļaut mēstuļu filtra apmācību pirms vēstuļu šifrēšanas",
+        "enable_encryption": "Ieslēgt šifrēšanu",
+        "enable_tooltip": "Ieslēgt šifrēšanu ar šo atslēgu",
+        "configure_title": "Ieslēgt šifrēšanu ar šo atslēgu",
+        "enable_button": "Ieslēgt",
+        "disable_tooltip": "Izslēgt šifrēšanu",
+        "enabled_success": "Krātuves šifrēšana ir iespējota"
       },
       "email_client": {
         "title": "Pasta klienta iestatīšana",
@@ -1495,6 +1570,13 @@
         "expired": "Šī koda derīgums ir beidzies.",
         "generating": "Ģenerē…",
         "error": "Neizdevās izveidot pārošanas kodu. Lūdzu, mēģiniet vēlreiz."
+      },
+      "public_keys": {
+        "name_label": "Publiskās atslēgas nosaukums",
+        "name_placeholder": "piem., Mana atslēga",
+        "key_label": "Publiskā atslēga (S/MIME vai PGP ASCII formātā)",
+        "key_placeholder": "Ielīmējiet šeit savu publisko atslēgu",
+        "none": "Nav konfigurēta neviena publiskā atslēga"
       }
     },
     "identities": {
@@ -2000,8 +2082,7 @@
     "delete": "Dzēst",
     "mark_as_spam": "Atzīmēt kā mēstuli",
     "not_spam": "Nav mēstule",
-    "color_tag": "Tags",
-    "remove_color": "Noņemt tagu",
+    "tag": "Tags",
     "items_selected": "{count} vēstules atlasītas",
     "edit_draft": "Rediģēt melnrakstu",
     "cancel_scheduled_send": "Atcelt sūtīšanu",
@@ -2331,6 +2412,9 @@
       "section_address_book": "Katalogs",
       "select_address_book": "Izvēlieties katalogu...",
       "section_identity": "Vārds un identitāte",
+      "contact_type": "Kontakta veids",
+      "type_person": "Persona",
+      "type_organization": "Organizācija",
       "section_work": "Darbs un organizācija",
       "prefix": "Prefikss",
       "prefix_placeholder": "Dr., kungs, kundze",
@@ -2415,7 +2499,7 @@
       "cancel": "Atcelt",
       "creating": "Izveido...",
       "updating": "Atjaunina...",
-      "name_required": "Nepieciešams vismaz vārds vai uzvārds",
+      "name_required": "Ievadiet vārdu, uzvārdu vai organizāciju",
       "email_invalid": "Ievadiet derīgu e-pasta adresi",
       "email_error_inline": "Nederīgs e-pasta formāts",
       "save_failed": "Neizdevās saglabāt kontaktu",
@@ -3282,5 +3366,18 @@
     "install": "Instalēt",
     "dont_remind": "Vairs man neatgādināt",
     "dismiss_aria": "Aizvērt instalēšanas paziņojumu"
+  },
+  "deep_link": {
+    "message_not_found": "Šī ziņa vairs nav pieejama.",
+    "thread_not_found": "Šī sarakste vairs nav pieejama.",
+    "folder_not_found": "Šī mape vairs nav pieejama.",
+    "event_not_found": "Šis notikums vairs nav pieejams.",
+    "file_not_found": "Šis fails vairs nav pieejams.",
+    "account_unavailable": "Piesakieties šajā kontā, lai atvērtu saiti.",
+    "copy_message": "Kopēt saiti uz ziņu",
+    "copy_conversation": "Kopēt saiti uz saraksti",
+    "copy_event": "Kopēt saiti uz notikumu",
+    "copied": "Saite nokopēta",
+    "copy_failed": "Neizdevās nokopēt saiti"
   }
 }

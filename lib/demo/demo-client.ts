@@ -56,7 +56,7 @@ export class DemoJMAPClient implements IJMAPClient {
 
   getCapabilities(): Record<string, unknown> {
     return {
-      'urn:ietf:params:jmap:core': { maxSizeUpload: 50_000_000, maxCallsInRequest: 16, maxObjectsInGet: 500 },
+      'urn:ietf:params:jmap:core': { maxSizeUpload: 50_000_000, maxCallsInRequest: 16, maxObjectsInGet: 500, maxObjectsInSet: 500 },
       'urn:ietf:params:jmap:mail': {},
       'urn:ietf:params:jmap:submission': { maxDelayedSend: 30 * 24 * 60 * 60, submissionExtensions: { FUTURERELEASE: true } },
       'urn:ietf:params:jmap:vacationresponse': {},
@@ -71,6 +71,7 @@ export class DemoJMAPClient implements IJMAPClient {
   getMaxSizeUpload(): number { return 50_000_000; }
   getMaxCallsInRequest(): number { return 16; }
   getMaxObjectsInGet(): number { return 500; }
+  getMaxObjectsInSet(): number { return 500; }
   getMaxDelayedSend(): number { return 30 * 24 * 60 * 60; }
   hasDelayedSend(): boolean { return true; }
   getEventSourceUrl(): string | null { return null; }
@@ -229,6 +230,23 @@ export class DemoJMAPClient implements IJMAPClient {
       };
     }
     return result;
+  }
+
+  async discoverKeywords(options?: {
+    limit?: number;
+    onProgress?: (scanned: number, total: number) => void;
+    signal?: AbortSignal;
+  }): Promise<{ keywords: Record<string, number>; scanned: number; total: number; complete: boolean }> {
+    const total = this.data.emails.length;
+    const scanned = Math.min(total, Math.max(0, options?.limit ?? total));
+    const keywords: Record<string, number> = {};
+    for (const email of this.data.emails.slice(0, scanned)) {
+      for (const [keyword, isSet] of Object.entries(email.keywords || {})) {
+        if (isSet) keywords[keyword] = (keywords[keyword] ?? 0) + 1;
+      }
+    }
+    options?.onProgress?.(scanned, total);
+    return { keywords, scanned, total, complete: scanned >= total };
   }
 
   async getCategoryUnreadCounts(mailboxId: string, tabs: Array<{ id: string; filter: Record<string, unknown> | null }>, _accountId?: string): Promise<Record<string, number>> {
@@ -1046,7 +1064,7 @@ export class DemoJMAPClient implements IJMAPClient {
     const node: FileNode = {
       id: generateDemoId('file'),
       parentId, name, type: 'd', blobId: null, size: 0,
-      created: new Date().toISOString(), updated: new Date().toISOString(),
+      created: new Date().toISOString(), modified: new Date().toISOString(),
     };
     this.data.fileNodes.push(node);
     return node;
@@ -1056,7 +1074,7 @@ export class DemoJMAPClient implements IJMAPClient {
     const node: FileNode = {
       id: generateDemoId('file'),
       parentId, name, type, blobId, size,
-      created: new Date().toISOString(), updated: new Date().toISOString(),
+      created: new Date().toISOString(), modified: new Date().toISOString(),
     };
     this.data.fileNodes.push(node);
     return node;
@@ -1064,7 +1082,7 @@ export class DemoJMAPClient implements IJMAPClient {
 
   async updateFileNode(id: string, updates: Partial<Pick<FileNode, 'name' | 'parentId'>>): Promise<void> {
     const node = this.data.fileNodes.find(n => n.id === id);
-    if (node) Object.assign(node, updates, { updated: new Date().toISOString() });
+    if (node) Object.assign(node, updates, { modified: new Date().toISOString() });
   }
 
   async updateFileNodes(updates: Record<string, Partial<Pick<FileNode, 'name' | 'parentId'>>>): Promise<{ updated: string[]; notUpdated: Record<string, string> }> {
@@ -1072,7 +1090,7 @@ export class DemoJMAPClient implements IJMAPClient {
     for (const [id, patch] of Object.entries(updates)) {
       const node = this.data.fileNodes.find(n => n.id === id);
       if (node) {
-        Object.assign(node, patch, { updated: new Date().toISOString() });
+        Object.assign(node, patch, { modified: new Date().toISOString() });
         updated.push(id);
       }
     }
@@ -1094,6 +1112,7 @@ export class DemoJMAPClient implements IJMAPClient {
   // ── S/MIME raw-email helpers ──────────────────────────────────
 
   async importRawEmail(): Promise<string> { return generateDemoId('email'); }
+  async copyEmailAcrossAccounts(): Promise<string> { return generateDemoId('email'); }
   async submitEmail(): Promise<void> { /* no-op */ }
   async submitRawEmail(blob: Blob,
     identityId: string,

@@ -122,7 +122,8 @@
     "mobile": {
       "search": "Søg",
       "compose": "Ny besked",
-      "go_back": "Gå tilbage"
+      "go_back": "Gå tilbage",
+      "toggle_menu": "Slå menu til/fra"
     },
     "clear_search": "Ryd søgning",
     "vacation_active": "Fraværsbeskeder er aktive",
@@ -130,6 +131,8 @@
     "demo_reset": "Nulstil",
     "demo_tour": "Rundvisning",
     "tags": "Tags",
+    "show_all_tags": "Vis alle ({count})",
+    "show_fewer_tags": "Vis færre",
     "folders": "Mapper",
     "shared": "Delt",
     "mail": "Mail",
@@ -298,6 +301,7 @@
     "print": "Udskriv",
     "view_source": "Vis kilde",
     "export_email": "Eksportér som .eml",
+    "forward_as_attachment": "Forward as attachment",
     "import_email": "Importér .eml eller .zip",
     "keyboard_shortcuts": "Tastaturgenveje (?)",
     "email_source": "E-mail-kilde",
@@ -324,13 +328,15 @@
     "view_contact": "Vis kontakt",
     "message_details": "Beskeddetaljer",
     "more_reply_options": "Flere svar-muligheder",
-    "set_color": "Sæt tag",
+    "set_tag": "Sæt tag",
     "tag": "Tag",
     "more_actions": "Flere handlinger",
     "previous": "Forrige",
     "next": "Næste",
     "move_to": "Flyt til...",
-    "remove_color": "Fjern tag",
+    "remove_tag": "Fjern tag",
+    "tag_filter_placeholder": "Filtrer tags",
+    "tag_no_matches": "Ingen matchende tags",
     "more_count": "+{count} mere",
     "characters_count": "{count} tegn",
     "quick_reply_placeholder": "Skriv et hurtigt svar...",
@@ -423,17 +429,6 @@
       "received": "Modtaget",
       "message_id": "Besked-ID",
       "list_info": "Listeinformation"
-    },
-    "color_tag": {
-      "title": "Farvetag",
-      "red": "Rød",
-      "orange": "Orange",
-      "yellow": "Gul",
-      "green": "Grøn",
-      "blue": "Blå",
-      "purple": "Lilla",
-      "pink": "Pink",
-      "none": "Ingen"
     },
     "tooltips": {
       "reply": "Svar (r)",
@@ -640,7 +635,6 @@
     "save_as_template": "Gem som skabelon",
     "validation": {
       "recipient_required": "Tilføj en modtager for at sende",
-      "subject_required": "Tilføj et emne",
       "body_required": "Skriv en besked eller vedhæft en fil",
       "attachments_uploading": "Vedhæftninger uploades stadig — sendes, når de er færdige",
       "attachment_upload_failed": "Ikke sendt - en vedhæftet fil kunne ikke uploades. Fjern den, og prøv igen."
@@ -651,6 +645,7 @@
     "drop_files": "Træk filer hertil for at vedhæfte",
     "show_less": "Vis mindre",
     "send_failed": "Kunne ikke sende e-mail",
+    "send_timeout": "Serveren holdt op med at svare. Tjek mappen Sendt, før du sender igen — beskeden er måske allerede afsendt.",
     "continue_draft": "Fortsæt kladde",
     "close_draft_title": "Gem eller kassér kladde?",
     "close_draft_message": "Du har ugemte ændringer. Vil du gemme dette som en kladde eller kassere det?",
@@ -666,6 +661,13 @@
     "forgot_attachment": {
       "title": "Har du glemt en vedhæftning?",
       "message": "Din besked nævner \"{keyword}\" men ingen fil er vedhæftet. Send alligevel?",
+      "send_anyway": "Send alligevel",
+      "back": "Tilbage til redigering"
+    },
+    "empty_subject": {
+      "title": "Send uden emne?",
+      "message": "Denne besked har intet emne. Send alligevel?",
+      "dont_ask_again": "Spørg ikke igen",
       "send_anyway": "Send alligevel",
       "back": "Tilbage til redigering"
     },
@@ -685,7 +687,40 @@
     "recipient_email_placeholder": "E-mailadresse",
     "recipient_name_placeholder": "Visningsnavn",
     "autocomplete_search_server": "Søg på serveren",
-    "autocomplete_searching": "Søger..."
+    "autocomplete_searching": "Søger...",
+    "toolbar": {
+      "bold": "Fed",
+      "italic": "Kursiv",
+      "underline": "Understreget",
+      "strikethrough": "Gennemstreget",
+      "text_color": "Tekstfarve",
+      "remove_color": "Fjern farve",
+      "heading_1": "Overskrift 1",
+      "heading_2": "Overskrift 2",
+      "bullet_list": "Punktopstilling",
+      "ordered_list": "Nummereret liste",
+      "quote": "Citat",
+      "code_block": "Kodeblok",
+      "align_left": "Venstrejusteret",
+      "align_center": "Centreret",
+      "align_right": "Højrejusteret",
+      "text_direction": "Tekstretning (RTL/LTR)",
+      "link": "Link",
+      "table": "Tabel",
+      "clear_formatting": "Ryd formatering",
+      "undo": "Fortryd",
+      "redo": "Gentag",
+      "add_row_above": "Tilføj række over",
+      "add_row_below": "Tilføj række under",
+      "add_column_before": "Tilføj kolonne før",
+      "add_column_after": "Tilføj kolonne efter",
+      "delete_row": "Slet række",
+      "delete_column": "Slet kolonne",
+      "toggle_header_row": "Slå overskriftsrække til/fra",
+      "delete_table": "Slet tabel",
+      "pick_size": "Vælg størrelse"
+    },
+    "send_filing_warning": "Sendt - men oprydningen bagefter mislykkedes, en forældet kladde kan blive stående."
   },
   "confirm_dialog": {
     "confirm": "Bekræft",
@@ -985,7 +1020,6 @@
       "title": "E-mail-tags",
       "description": "Definér tags til at organisere dine e-mails med farver. Disse gemmes som JMAP-nøgleord på serveren.",
       "add_keyword": "Tilføj tag",
-      "reset_defaults": "Nulstil til standard",
       "label_field": "Visningsnavn",
       "label_placeholder": "f.eks. Arbejde, Privat, Vigtigt",
       "id_field": "Tag-ID",
@@ -998,7 +1032,34 @@
       "add": "Tilføj",
       "cancel": "Annuller",
       "migrating": "Opdaterer tag på eksisterende e-mails…",
-      "migration_error": "Kunne ikke opdatere tag på eksisterende e-mails"
+      "migration_error": "Kunne ikke opdatere tag på eksisterende e-mails",
+      "nesting": {
+        "label": "Indlejrede tags",
+        "description": "Indlejr tags under andre tags og vis dem som et træ i sidepanelet."
+      },
+      "parent_field": "Overordnet tag",
+      "no_parent": "Intet overordnet tag",
+      "too_long": "Denne tagsti er for lang (højst {max} tegn)",
+      "has_children_locked": "Andre tags er indlejret under dette, så dets navn og overordnede tag er låst. Flyt eller fjern dem først.",
+      "has_children_delete": "Fjern først de tags, der er indlejret under dette",
+      "visibility_field": "Synlighed i sidepanel",
+      "visibility": {
+        "show": "Vis",
+        "unread": "Vis ved ulæste",
+        "hide": "Skjul"
+      },
+      "unrecognized": {
+        "title": "Gendan tags fra serveren",
+        "description": "Tagnavne og farver gemmes i denne browser, men selve taggene ligger på dine e-mails som JMAP-nøgleord. Scan din post for nøgleord, som intet tag her forklarer, og tilføj dem igen.",
+        "scan": "Søg efter tags",
+        "rescan": "Scan igen",
+        "scanning": "Scanner… {scanned} af {total} e-mails",
+        "none": "Alle tags på dine e-mails er allerede defineret her.",
+        "messages": "{count, plural, one {# e-mail} other {# e-mails}}",
+        "add_all": "Tilføj alle {count}",
+        "partial": "Kun de {scanned} nyeste af {total} e-mails blev scannet. Tags, der kun bruges på ældre post, mangler måske.",
+        "error": "Kunne ikke scanne din post for tags."
+      }
     },
     "notifications": {
       "test_sound": "Test notifikationslyd",
@@ -1026,6 +1087,7 @@
         "disable": "Deaktivér",
         "confirm_disable_title": "Deaktivér baggrundsnotifikationer?",
         "confirm_disable_message": "Denne enhed stopper med at modtage alarmer, når sitet er lukket.",
+        "dismiss_aria": "Afvis notifikationsprompt",
         "ios_hint": "På iOS skal du installere sitet på din startskærm først - Safari leverer kun Web Push til installerede PWA'er."
       },
       "sound_selection": {
@@ -1277,6 +1339,10 @@
         "add": "Tilføj",
         "remove": "Fjern"
       },
+      "empty_subject_warning": {
+        "label": "Advarsel om tomt emne",
+        "description": "Bed om bekræftelse, før en besked uden emne sendes."
+      },
       "hide_inline_image_attachments": {
         "label": "Skjul indlejrede billeder fra vedhæftninger",
         "description": "Billeder indlejret i beskedteksten vises ikke som separate vedhæftninger"
@@ -1478,7 +1544,16 @@
         "inactive": "Deaktiveret",
         "enabled": "Kryptering af lagrede data aktiveret",
         "disabled_success": "Kryptering af lagrede data deaktiveret",
-        "error": "Kunne ikke opdatere krypteringsindstillinger"
+        "error": "Kunne ikke opdatere krypteringsindstillinger",
+        "algorithm_label": "Krypteringsalgoritme",
+        "encrypt_on_append": "Krypter nye e-mails ved upload",
+        "allow_spam_training": "Tillad spamtræning, før e-mails krypteres",
+        "enable_encryption": "Aktivér kryptering",
+        "enable_tooltip": "Aktivér kryptering med denne nøgle",
+        "configure_title": "Aktivér kryptering med denne nøgle",
+        "enable_button": "Aktivér",
+        "disable_tooltip": "Deaktivér kryptering",
+        "enabled_success": "Kryptering af lagrede data aktiveret"
       },
       "email_client": {
         "title": "E-mail-klientopsætning",
@@ -1498,6 +1573,13 @@
         "expired": "Denne kode er udløbet.",
         "generating": "Genererer…",
         "error": "Kunne ikke oprette en parringskode. Prøv igen."
+      },
+      "public_keys": {
+        "name_label": "Navn på offentlig nøgle",
+        "name_placeholder": "f.eks. Min nøgle",
+        "key_label": "Offentlig nøgle (S/MIME eller PGP i ASCII-format)",
+        "key_placeholder": "Indsæt din offentlige nøgle her",
+        "none": "Ingen offentlige nøgler konfigureret"
       }
     },
     "identities": {
@@ -2000,8 +2082,7 @@
     "delete": "Slet",
     "mark_as_spam": "Rapportér spam",
     "not_spam": "Ikke spam",
-    "color_tag": "Tag",
-    "remove_color": "Fjern tag",
+    "tag": "Tag",
     "items_selected": "{count} e-mails valgt",
     "edit_draft": "Redigér kladde",
     "cancel_scheduled_send": "Annuller afsendelse",
@@ -2335,6 +2416,9 @@
       "section_address_book": "Adressebog",
       "select_address_book": "Vælg en adressebog...",
       "section_identity": "Navn & identitet",
+      "contact_type": "Kontakttype",
+      "type_person": "Person",
+      "type_organization": "Organisation",
       "section_work": "Arbejde & organisation",
       "prefix": "Præfiks",
       "prefix_placeholder": "Dr., hr., fru",
@@ -2419,7 +2503,7 @@
       "cancel": "Annuller",
       "creating": "Opretter...",
       "updating": "Opdaterer...",
-      "name_required": "Mindst et fornavn eller efternavn er påkrævet",
+      "name_required": "Angiv et fornavn, efternavn eller en organisation",
       "email_invalid": "Indtast en gyldig e-mailadresse",
       "email_error_inline": "Ugyldigt e-mailformat",
       "save_failed": "Kunne ikke gemme kontakt",
@@ -3282,5 +3366,18 @@
     "install": "Installer",
     "dont_remind": "Påmind mig ikke igen",
     "dismiss_aria": "Afvis installationsprompt"
+  },
+  "deep_link": {
+    "message_not_found": "Denne besked er ikke længere tilgængelig.",
+    "thread_not_found": "Denne samtale er ikke længere tilgængelig.",
+    "folder_not_found": "Denne mappe er ikke længere tilgængelig.",
+    "event_not_found": "Denne begivenhed er ikke længere tilgængelig.",
+    "file_not_found": "Denne fil er ikke længere tilgængelig.",
+    "account_unavailable": "Log ind på den konto for at åbne dette link.",
+    "copy_message": "Kopier link til besked",
+    "copy_conversation": "Kopier link til samtale",
+    "copy_event": "Kopier link til begivenhed",
+    "copied": "Link kopieret",
+    "copy_failed": "Kunne ikke kopiere linket"
   }
 }

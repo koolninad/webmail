@@ -122,7 +122,8 @@
     "mobile": {
       "search": "بحث",
       "compose": "إنشاء رسالة",
-      "go_back": "العودة"
+      "go_back": "العودة",
+      "toggle_menu": "تبديل القائمة"
     },
     "clear_search": "مسح البحث",
     "vacation_active": "الرد التلقائي أثناء الغياب مفعّل",
@@ -130,6 +131,8 @@
     "demo_reset": "إعادة تعيين",
     "demo_tour": "جولة",
     "tags": "الوسوم",
+    "show_all_tags": "إظهار الكل ({count})",
+    "show_fewer_tags": "إظهار أقل",
     "folders": "المجلدات",
     "shared": "مشترك",
     "mail": "البريد",
@@ -298,6 +301,7 @@
     "print": "طباعة",
     "view_source": "عرض المصدر",
     "export_email": "تصدير كملف ‎.eml",
+    "forward_as_attachment": "Forward as attachment",
     "import_email": "استيراد ملف ‎.eml أو ‎.zip",
     "keyboard_shortcuts": "اختصارات لوحة المفاتيح (؟)",
     "email_source": "مصدر الرسالة",
@@ -324,13 +328,15 @@
     "view_contact": "عرض جهة الاتصال",
     "message_details": "تفاصيل الرسالة",
     "more_reply_options": "خيارات رد إضافية",
-    "set_color": "تعيين وسم",
+    "set_tag": "تعيين وسم",
     "tag": "وسم",
     "more_actions": "المزيد من الإجراءات",
     "previous": "السابق",
     "next": "التالي",
     "move_to": "نقل إلى...",
-    "remove_color": "إزالة الوسم",
+    "remove_tag": "إزالة الوسم",
+    "tag_filter_placeholder": "تصفية الوسوم",
+    "tag_no_matches": "لا توجد وسوم مطابقة",
     "more_count": "+{count} أخرى",
     "characters_count": "{count} حرفًا",
     "quick_reply_placeholder": "اكتب ردًا سريعًا...",
@@ -423,17 +429,6 @@
       "received": "استُلمت",
       "message_id": "معرّف الرسالة",
       "list_info": "معلومات القائمة"
-    },
-    "color_tag": {
-      "title": "وسم لوني",
-      "red": "أحمر",
-      "orange": "برتقالي",
-      "yellow": "أصفر",
-      "green": "أخضر",
-      "blue": "أزرق",
-      "purple": "بنفسجي",
-      "pink": "وردي",
-      "none": "بلا"
     },
     "tooltips": {
       "reply": "رد (r)",
@@ -641,7 +636,6 @@
     "save_as_template": "حفظ كقالب",
     "validation": {
       "recipient_required": "أضف مستلمًا للإرسال",
-      "subject_required": "أضف موضوعًا",
       "body_required": "اكتب رسالة أو أرفق ملفًا",
       "attachments_uploading": "المرفقات لا تزال قيد الرفع — سيتم الإرسال فور انتهائها",
       "attachment_upload_failed": "لم يتم الإرسال — فشل رفع أحد المرفقات. أزله وحاول مرة أخرى."
@@ -652,6 +646,7 @@
     "drop_files": "أفلت الملفات لإرفاقها",
     "show_less": "إظهار أقل",
     "send_failed": "فشل إرسال الرسالة",
+    "send_timeout": "توقف الخادم عن الاستجابة. تحقق من مجلد المُرسَل قبل إعادة الإرسال — فقد تكون الرسالة قد أُرسلت بالفعل.",
     "continue_draft": "متابعة المسودة",
     "close_draft_title": "حفظ المسودة أم تجاهلها؟",
     "close_draft_message": "لديك تغييرات غير محفوظة. هل تريد حفظها كمسودة أم تجاهلها؟",
@@ -670,6 +665,13 @@
       "send_anyway": "الإرسال على أي حال",
       "back": "العودة إلى التعديل"
     },
+    "empty_subject": {
+      "title": "إرسال بدون موضوع؟",
+      "message": "لا يحتوي هذا البريد على موضوع. هل تريد إرساله على أي حال؟",
+      "dont_ask_again": "عدم السؤال مرة أخرى",
+      "send_anyway": "الإرسال على أي حال",
+      "back": "العودة إلى التعديل"
+    },
     "schedule_send": "جدولة الإرسال",
     "schedule_send_description": "اختر متى يجب على الخادم إرسال هذه الرسالة.",
     "schedule_send_required": "اختر تاريخًا ووقتًا.",
@@ -685,7 +687,40 @@
     "recipient_email_placeholder": "عنوان البريد الإلكتروني",
     "recipient_name_placeholder": "الاسم المعروض",
     "autocomplete_search_server": "البحث في الخادم",
-    "autocomplete_searching": "جارٍ البحث..."
+    "autocomplete_searching": "جارٍ البحث...",
+    "toolbar": {
+      "bold": "غامق",
+      "italic": "مائل",
+      "underline": "تسطير",
+      "strikethrough": "يتوسطه خط",
+      "text_color": "لون النص",
+      "remove_color": "إزالة اللون",
+      "heading_1": "عنوان 1",
+      "heading_2": "عنوان 2",
+      "bullet_list": "قائمة نقطية",
+      "ordered_list": "قائمة مرقمة",
+      "quote": "اقتباس",
+      "code_block": "كتلة برمجية",
+      "align_left": "محاذاة لليسار",
+      "align_center": "توسيط",
+      "align_right": "محاذاة لليمين",
+      "text_direction": "اتجاه النص (RTL/LTR)",
+      "link": "رابط",
+      "table": "جدول",
+      "clear_formatting": "مسح التنسيق",
+      "undo": "تراجع",
+      "redo": "إعادة",
+      "add_row_above": "إضافة صف بالأعلى",
+      "add_row_below": "إضافة صف بالأسفل",
+      "add_column_before": "إضافة عمود قبل",
+      "add_column_after": "إضافة عمود بعد",
+      "delete_row": "حذف الصف",
+      "delete_column": "حذف العمود",
+      "toggle_header_row": "تبديل صف الرأس",
+      "delete_table": "حذف الجدول",
+      "pick_size": "اختيار الحجم"
+    },
+    "send_filing_warning": "تم الإرسال - لكن التنظيف بعد الإرسال فشل، وقد تبقى مسودة قديمة."
   },
   "confirm_dialog": {
     "confirm": "تأكيد",
@@ -985,7 +1020,6 @@
       "title": "وسوم البريد",
       "description": "عرّف وسومًا لتنظيم رسائلك بالألوان. تُخزَّن هذه ككلمات مفتاحية JMAP على الخادم.",
       "add_keyword": "إضافة وسم",
-      "reset_defaults": "إعادة التعيين للافتراضي",
       "label_field": "الاسم المعروض",
       "label_placeholder": "مثال: عمل، شخصي، عاجل",
       "id_field": "معرّف الوسم",
@@ -998,7 +1032,34 @@
       "add": "إضافة",
       "cancel": "إلغاء",
       "migrating": "جارٍ تحديث الوسم على الرسائل الحالية…",
-      "migration_error": "فشل تحديث الوسم على الرسائل الحالية"
+      "migration_error": "فشل تحديث الوسم على الرسائل الحالية",
+      "nesting": {
+        "label": "وسوم متداخلة",
+        "description": "ضع الوسوم داخل وسوم أخرى واعرضها كشجرة في الشريط الجانبي."
+      },
+      "parent_field": "الوسم الأصل",
+      "no_parent": "بدون وسم أصل",
+      "too_long": "مسار الوسم طويل جدًا ({max} حرفًا على الأكثر)",
+      "has_children_locked": "توجد وسوم أخرى متداخلة تحت هذا الوسم، لذا فإن اسمه ووسمه الأصل مقفلان. انقلها أو احذفها أولًا.",
+      "has_children_delete": "احذف أولًا الوسوم المتداخلة تحت هذا الوسم",
+      "visibility_field": "الظهور في الشريط الجانبي",
+      "visibility": {
+        "show": "إظهار",
+        "unread": "إظهار عند وجود غير مقروء",
+        "hide": "إخفاء"
+      },
+      "unrecognized": {
+        "title": "استعادة الوسوم من الخادم",
+        "description": "تُخزَّن أسماء الوسوم وألوانها في هذا المتصفح، لكن الوسوم نفسها موجودة على رسائلك ككلمات مفتاحية JMAP. افحص بريدك بحثًا عن كلمات مفتاحية لا يفسّرها أي وسم هنا، ثم أعِد إضافتها.",
+        "scan": "البحث عن الوسوم",
+        "rescan": "إعادة الفحص",
+        "scanning": "جارٍ الفحص… {scanned} من {total} رسالة",
+        "none": "كل وسم على رسائلك معرَّف هنا بالفعل.",
+        "messages": "{count, plural, one {رسالة واحدة} other {# رسالة}}",
+        "add_all": "إضافة الكل ({count})",
+        "partial": "تم فحص أحدث {scanned} رسالة فقط من أصل {total}. قد تكون الوسوم المستخدمة في البريد الأقدم فقط غير مدرجة.",
+        "error": "تعذّر فحص بريدك بحثًا عن الوسوم."
+      }
     },
     "notifications": {
       "test_sound": "اختبار صوت الإشعار",
@@ -1026,6 +1087,7 @@
         "disable": "تعطيل",
         "confirm_disable_title": "تعطيل الإشعارات في الخلفية؟",
         "confirm_disable_message": "سيتوقف هذا الجهاز عن تلقي التنبيهات عند إغلاق الموقع.",
+        "dismiss_aria": "تجاهل مطالبة الإشعارات",
         "ios_hint": "على iOS، ثبّت الموقع على الشاشة الرئيسية أولًا - يقدّم Safari خدمة Web Push فقط لتطبيقات PWA المثبّتة."
       },
       "sound_selection": {
@@ -1277,6 +1339,10 @@
         "add": "إضافة",
         "remove": "إزالة"
       },
+      "empty_subject_warning": {
+        "label": "تحذير الموضوع الفارغ",
+        "description": "طلب تأكيد قبل إرسال رسالة بدون موضوع."
+      },
       "hide_inline_image_attachments": {
         "label": "إخفاء الصور المضمّنة من المرفقات",
         "description": "الصور المضمّنة في نص الرسالة لا تُدرج كمرفقات منفصلة"
@@ -1482,7 +1548,16 @@
         "inactive": "معطّل",
         "enabled": "تم تفعيل التشفير أثناء التخزين",
         "disabled_success": "تم تعطيل التشفير أثناء التخزين",
-        "error": "فشل تحديث إعدادات التشفير"
+        "error": "فشل تحديث إعدادات التشفير",
+        "algorithm_label": "خوارزمية التشفير",
+        "encrypt_on_append": "تشفير الرسائل الجديدة عند رفعها",
+        "allow_spam_training": "السماح بتدريب مرشّح البريد العشوائي قبل تشفير الرسائل",
+        "enable_encryption": "تفعيل التشفير",
+        "enable_tooltip": "تفعيل التشفير باستخدام هذا المفتاح",
+        "configure_title": "تفعيل التشفير باستخدام هذا المفتاح",
+        "enable_button": "تفعيل",
+        "disable_tooltip": "تعطيل التشفير",
+        "enabled_success": "تم تفعيل التشفير أثناء التخزين"
       },
       "email_client": {
         "title": "إعداد عميل البريد الإلكتروني",
@@ -1502,6 +1577,13 @@
         "expired": "انتهت صلاحية هذا الرمز.",
         "generating": "جارٍ التوليد…",
         "error": "تعذّر إنشاء رمز الاقتران. يرجى المحاولة مرة أخرى."
+      },
+      "public_keys": {
+        "name_label": "اسم المفتاح العام",
+        "name_placeholder": "مثال: مفتاحي",
+        "key_label": "المفتاح العام (S/MIME أو PGP بترميز ASCII)",
+        "key_placeholder": "الصق مفتاحك العام هنا",
+        "none": "لا توجد مفاتيح عامة مُعدّة"
       }
     },
     "identities": {
@@ -2000,8 +2082,7 @@
     "delete": "حذف",
     "mark_as_spam": "الإبلاغ عن بريد مزعج",
     "not_spam": "ليس مزعجًا",
-    "color_tag": "وسم",
-    "remove_color": "إزالة الوسم",
+    "tag": "وسم",
     "items_selected": "{count} رسالة محددة",
     "edit_draft": "تعديل المسودة",
     "cancel_scheduled_send": "إلغاء الإرسال",
@@ -2336,6 +2417,9 @@
       "section_address_book": "الدليل",
       "select_address_book": "اختر دليلًا...",
       "section_identity": "الاسم والهوية",
+      "contact_type": "نوع جهة الاتصال",
+      "type_person": "شخص",
+      "type_organization": "المؤسسة",
       "section_work": "العمل والمؤسسة",
       "prefix": "اللقب",
       "prefix_placeholder": "د.، أ.، السيدة",
@@ -2420,7 +2504,7 @@
       "cancel": "إلغاء",
       "creating": "جارٍ الإنشاء...",
       "updating": "جارٍ التحديث...",
-      "name_required": "يلزم إدخال الاسم الأول أو اسم العائلة على الأقل",
+      "name_required": "أدخل اسمًا أول أو اسم عائلة أو مؤسسة",
       "email_invalid": "يرجى إدخال عنوان بريد إلكتروني صالح",
       "email_error_inline": "تنسيق البريد الإلكتروني غير صالح",
       "save_failed": "فشل حفظ جهة الاتصال",
@@ -3281,5 +3365,18 @@
     "install": "تثبيت",
     "dont_remind": "عدم التذكير مرة أخرى",
     "dismiss_aria": "تجاهل مطالبة التثبيت"
+  },
+  "deep_link": {
+    "message_not_found": "لم تعد هذه الرسالة متاحة.",
+    "thread_not_found": "لم تعد هذه المحادثة متاحة.",
+    "folder_not_found": "لم يعد هذا المجلد متاحًا.",
+    "event_not_found": "لم يعد هذا الحدث متاحًا.",
+    "file_not_found": "لم يعد هذا الملف متاحًا.",
+    "account_unavailable": "سجّل الدخول إلى ذلك الحساب لفتح هذا الرابط.",
+    "copy_message": "نسخ رابط الرسالة",
+    "copy_conversation": "نسخ رابط المحادثة",
+    "copy_event": "نسخ رابط الحدث",
+    "copied": "تم نسخ الرابط",
+    "copy_failed": "تعذّر نسخ الرابط"
   }
 }

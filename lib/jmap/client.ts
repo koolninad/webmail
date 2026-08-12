@@ -2,17 +2,21 @@ import type { Email, Mailbox, StateChange, AccountStates, Thread, Identity, Emai
 import type { SieveScript, SieveCapabilities } from "./sieve-types";
 import type { IJMAPClient } from "./client-interface";
 import { toWildcardQuery } from "./search-utils";
+import { batched, itemsPerRequest } from "./request-limits";
 import { debug } from "@/lib/debug";
 import { normalizeCalendarEventLike } from "@/lib/calendar-event-normalization";
+import { sanitizeDisplayName, splitMailbox } from "@/lib/rfc5322-mailbox";
 
-/** Parse a recipient string that may be "Name <email>" or bare "email" into { name?, email }. */
+/**
+ * Parse a recipient string that may be "Name <email>" or bare "email" into
+ * { name?, email }. The display name is unquoted and stripped of any address
+ * it carries inline: JMAP takes the name and the address as separate fields,
+ * so leaving the quoting or a second copy of the address in there makes the
+ * server emit an invalid To/Cc mailbox, which it then re-parses into a
+ * malformed envelope recipient (#672).
+ */
 function parseRecipientString(s: string): { name?: string; email: string } {
-  const trimmed = s.trim();
-  const angleMatch = trimmed.match(/^(.+?)\s*<([^>]+)>$/);
-  if (angleMatch) {
-    return { name: angleMatch[1].trim(), email: angleMatch[2].trim() };
-  }
-  return { email: trimmed };
+  return splitMailbox(s);
 }
 
 /**
@@ -56,6 +60,25 @@ export class RateLimitError extends Error {
     super('Rate limited by server');
     this.name = 'RateLimitError';
     this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/**
+ * A request produced no response headers within its deadline.
+ *
+ * `fetch()` has no timeout of its own, and a half-dead connection - the OS or a
+ * NAT dropped the socket while the browser still believes it is usable - never
+ * rejects. iOS hits this constantly: it freezes a backgrounded tab (and, more
+ * aggressively, a home-screen web app), and on resume WebKit reuses pooled
+ * connections the network has already torn down. The request bytes leave, the
+ * server may even act on them, but the response never comes back. Without a
+ * deadline the caller's promise stays pending forever, so the composer's Send
+ * button stays disabled and "Save draft" never closes the composer (#702).
+ */
+export class RequestTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    this.name = 'RequestTimeoutError';
   }
 }
 
@@ -151,6 +174,15 @@ const EMAIL_LIST_PROPERTIES = [
   // Needed so list rows can serve drag-out to the file system as .eml.
   "blobId",
 ] as const;
+
+/**
+ * How many messages `discoverKeywords` walks before it gives up and reports an
+ * incomplete scan. A keyword only has to sit on one message to be worth
+ * recovering, so there is no cheaper place to stop than "all of them" - the cap
+ * exists so a very large account cannot turn a settings page into an unbounded
+ * page-by-page crawl, not because the tail is uninteresting.
+ */
+export const DEFAULT_KEYWORD_SCAN_LIMIT = 25000;
 
 // Stalwart's default property list for Calendar/get omits shareWith, isVisible,
 // includeInAvailability, and the default-alerts properties. Without an explicit
@@ -504,8 +536,7 @@ function buildInCalendarFilter(calendarIds: string[]): Record<string, unknown> {
 // whose display-name is invalid per RFC 5322 §3.4 and gets rejected by the
 // submission validator - the email then sits forever in Drafts.
 function sanitizeIdentityDisplayName(name: string | undefined | null): string {
-  if (!name) return '';
-  return name.replace(/\s*<[^>]*>\s*$/, '').trim();
+  return sanitizeDisplayName(name);
 }
 
 function normalizeEnvelopeRecipients(recipients?: Array<string | EmailAddress>): Array<{ email: string }> {
@@ -540,6 +571,18 @@ type SubmissionCapability = {
 
 export class JMAPClient implements IJMAPClient {
   private static readonly RATE_LIMIT_TOAST_THROTTLE_MS = 10_000;
+  /**
+   * How long a request may go without producing response headers. Generous
+   * enough that a slow mobile link or a busy server still completes, short
+   * enough that a dead connection surfaces as an error the user can retry
+   * rather than a permanently spinning UI.
+   */
+  private static readonly REQUEST_TIMEOUT_MS = 30_000;
+  /**
+   * Blob transfers answer only once the payload has moved, so a large
+   * attachment on a slow uplink legitimately outlives the normal deadline.
+   */
+  private static readonly TRANSFER_TIMEOUT_MS = 300_000;
 
   private serverUrl: string;
   private username: string;
@@ -606,31 +649,32 @@ export class JMAPClient implements IJMAPClient {
         return [];
       }
 
-      const response = await this.request([
-        ["Email/get", {
-          accountId: targetAccountId,
-          ids: emailsId,
-          properties: [...EMAIL_LIST_PROPERTIES],
-        }, "0"],
-      ]);
+      const emails: Email[] = [];
 
-      const getResponse = response.methodResponses?.[0]?.[1];
+      for (const batchIds of batched(emailsId, this.getMaxObjectsInGet())) {
+        const response = await this.request([
+          ["Email/get", {
+            accountId: targetAccountId,
+            ids: batchIds,
+            properties: [...EMAIL_LIST_PROPERTIES],
+          }, "0"],
+        ]);
 
-      if (response.methodResponses?.[0]?.[0] === "Email/get" && getResponse) {
-        const emails = (getResponse.list || []) as Email[];
-
-        emails.sort((a: Email, b: Email) =>
-          new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()
-        );
-
-        if (accountId && accountId !== this.accountId) {
-          namespaceMailboxIds(emails, accountId);
+        const getResponse = response.methodResponses?.[0]?.[1];
+        if (response.methodResponses?.[0]?.[0] === "Email/get" && getResponse) {
+          emails.push(...((getResponse.list || []) as Email[]));
         }
-
-        return emails;
       }
 
-      return [];
+      emails.sort((a: Email, b: Email) =>
+        new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()
+      );
+
+      if (accountId && accountId !== this.accountId) {
+        namespaceMailboxIds(emails, accountId);
+      }
+
+      return emails;
     } catch (error) {
       console.error('Failed to get specific emails:', error);
       return [];
@@ -667,7 +711,56 @@ export class JMAPClient implements IJMAPClient {
     return this.serverUrl;
   }
 
-  private async authenticatedFetch(url: string, init?: Parameters<typeof fetch>[1]): Promise<Response> {
+  /**
+   * `fetch` with a deadline on the response *headers*.
+   *
+   * The timer is cleared as soon as the fetch settles, so it never touches the
+   * body: long-lived streams (SSE) and slow blob transfers keep working once
+   * the server has started answering. What it does catch is the stalled case -
+   * a connection that accepts the request and then goes silent - which fetch
+   * itself would leave pending indefinitely.
+   *
+   * A caller-supplied `init.signal` still aborts the request (and, for SSE, the
+   * stream) at any time; it is chained into the internal controller rather than
+   * replaced.
+   */
+  private async timedFetch(
+    url: string,
+    init: Parameters<typeof fetch>[1],
+    headers: Record<string, string>,
+    timeoutMs: number,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const external = init?.signal ?? undefined;
+    if (external) {
+      if (external.aborted) controller.abort(external.reason);
+      else external.addEventListener('abort', () => controller.abort(external.reason), { once: true });
+    }
+
+    // Tracked separately from the signal: the abort reason is what distinguishes
+    // "we gave up" from "the caller cancelled", and callers must be able to tell
+    // those apart (a cancelled send is not a failed send).
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      return await fetch(url, { ...init, headers, signal: controller.signal });
+    } catch (error) {
+      if (timedOut) throw new RequestTimeoutError(timeoutMs);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async authenticatedFetch(
+    url: string,
+    init?: Parameters<typeof fetch>[1],
+    opts?: { timeoutMs?: number },
+  ): Promise<Response> {
     // Short-circuit: if rate-limited, reject immediately without sending a request
     if (this.isRateLimited()) {
       const remaining = this.rateLimitedUntil - Date.now();
@@ -675,16 +768,22 @@ export class JMAPClient implements IJMAPClient {
       throw new RateLimitError(remaining);
     }
 
+    const timeoutMs = opts?.timeoutMs ?? JMAPClient.REQUEST_TIMEOUT_MS;
     const headers = { ...init?.headers as Record<string, string>, 'Authorization': this.authHeader };
     let response: Response;
 
     try {
-      response = await fetch(url, { ...init, headers });
+      response = await this.timedFetch(url, init, headers, timeoutMs);
     } catch (error) {
       // Network error: retry once after brief delay (transient proxy/connection issues)
       if (this.reconnecting) throw error;
+      // A timeout is NOT retried. The request may well have reached the server
+      // and been acted on - only the answer was lost - and these bodies are not
+      // idempotent: replaying an EmailSubmission/set would send the mail twice.
+      // Surface it instead so the caller can report a failure the user can act on.
+      if (error instanceof RequestTimeoutError) throw error;
       await new Promise(r => setTimeout(r, 1000));
-      response = await fetch(url, { ...init, headers });
+      response = await this.timedFetch(url, init, headers, timeoutMs);
     }
 
     // Handle 429 rate limiting - stop immediately, do not retry
@@ -700,7 +799,7 @@ export class JMAPClient implements IJMAPClient {
         if (newToken) {
           this.updateAccessToken(newToken);
           const retryHeaders = { ...init?.headers as Record<string, string>, 'Authorization': this.authHeader };
-          response = await fetch(url, { ...init, headers: retryHeaders });
+          response = await this.timedFetch(url, init, retryHeaders, timeoutMs);
         }
       } else if (this.authMode === 'basic' && !this.reconnecting && url !== `${this.serverUrl}/.well-known/jmap`) {
         // JMAP session may have expired - re-establish and retry once
@@ -709,7 +808,7 @@ export class JMAPClient implements IJMAPClient {
           await this.refreshSession();
           this.connectionChangeCallback?.(true);
           const retryHeaders = { ...init?.headers as Record<string, string>, 'Authorization': this.authHeader };
-          response = await fetch(url, { ...init, headers: retryHeaders });
+          response = await this.timedFetch(url, init, retryHeaders, timeoutMs);
         } catch {
           // Session refresh failed - if TOTP was used, try re-auth with fresh TOTP
           if (this.onTotpRequired && this.basePassword) {
@@ -720,7 +819,7 @@ export class JMAPClient implements IJMAPClient {
                 await this.refreshSession();
                 this.connectionChangeCallback?.(true);
                 const retryHeaders = { ...init?.headers as Record<string, string>, 'Authorization': this.authHeader };
-                response = await fetch(url, { ...init, headers: retryHeaders });
+                response = await this.timedFetch(url, init, retryHeaders, timeoutMs);
               }
             } catch {
               // TOTP re-auth also failed - return original 401
@@ -1266,56 +1365,149 @@ export class JMAPClient implements IJMAPClient {
 
   async getTagCounts(tagIds: string[]): Promise<Record<string, { total: number; unread: number }>> {
     if (tagIds.length === 0) return {};
-    try {
-      const methodCalls: JMAPMethodCall[] = [];
-      for (let i = 0; i < tagIds.length; i++) {
-        const keyword = `$label:${tagIds[i]}`;
-        // Total count for this tag
-        methodCalls.push(["Email/query", {
-          accountId: this.accountId,
-          filter: { hasKeyword: keyword },
-          limit: 0,
-          calculateTotal: true,
-        }, `total_${i}`]);
-        // Unread count for this tag
-        methodCalls.push(["Email/query", {
-          accountId: this.accountId,
-          filter: {
-            operator: "AND",
-            conditions: [
-              { hasKeyword: keyword },
-              { notKeyword: "$seen" },
-            ],
-          },
-          limit: 0,
-          calculateTotal: true,
-        }, `unread_${i}`]);
+    const result: Record<string, { total: number; unread: number }> = {};
+
+    const CALLS_PER_TAG = 2;
+    const perRequest = itemsPerRequest(this.getMaxCallsInRequest(), CALLS_PER_TAG);
+
+    for (const batch of batched(tagIds, perRequest)) {
+      try {
+        const methodCalls: JMAPMethodCall[] = [];
+        for (let i = 0; i < batch.length; i++) {
+          const keyword = `$label:${batch[i]}`;
+          // Total count for this tag
+          methodCalls.push(["Email/query", {
+            accountId: this.accountId,
+            filter: { hasKeyword: keyword },
+            limit: 0,
+            calculateTotal: true,
+          }, `total_${i}`]);
+          // Unread count for this tag
+          methodCalls.push(["Email/query", {
+            accountId: this.accountId,
+            filter: {
+              operator: "AND",
+              conditions: [
+                { hasKeyword: keyword },
+                { notKeyword: "$seen" },
+              ],
+            },
+            limit: 0,
+            calculateTotal: true,
+          }, `unread_${i}`]);
+        }
+
+        const response = await this.request(methodCalls);
+
+        for (let i = 0; i < batch.length; i++) {
+          const totalResp = response.methodResponses?.[i * 2]?.[1];
+          const unreadResp = response.methodResponses?.[i * 2 + 1]?.[1];
+          result[batch[i]] = {
+            total: totalResp?.total ?? 0,
+            unread: unreadResp?.total ?? 0,
+          };
+        }
+      } catch (error) {
+        console.error('Failed to get tag counts:', error);
       }
-
-      const response = await this.request(methodCalls);
-      const result: Record<string, { total: number; unread: number }> = {};
-
-      for (let i = 0; i < tagIds.length; i++) {
-        const totalResp = response.methodResponses?.[i * 2]?.[1];
-        const unreadResp = response.methodResponses?.[i * 2 + 1]?.[1];
-        result[tagIds[i]] = {
-          total: totalResp?.total ?? 0,
-          unread: unreadResp?.total ?? 0,
-        };
-      }
-
-      return result;
-    } catch (error) {
-      console.error('Failed to get tag counts:', error);
-      return {};
     }
+
+    return result;
+  }
+
+  /**
+   * Every keyword the account's messages actually carry, and how many messages
+   * carry each.
+   *
+   * JMAP has no "list the keywords in use" call - a keyword exists only as a
+   * property of the messages bearing it - so the only way to find them is to
+   * walk the message list and union what turns up. Each page is one request:
+   * an Email/query for the next slice of ids and an Email/get back-referencing
+   * it, asking for nothing but `keywords`.
+   *
+   * Counting here rather than following up with `getTagCounts` costs nothing
+   * extra - the messages are already in hand - and counts whatever spelling the
+   * keyword actually has, which a `$label:`-shaped count query cannot do for a
+   * keyword still written the legacy way. The trade is that a count is only
+   * over the messages walked, so it is a floor rather than a total whenever
+   * `complete` is false.
+   *
+   * The walk is capped at `limit` messages because an account can hold far more
+   * mail than is worth paging through for this; `complete` says whether the cap
+   * (or an abort) cut the scan short, so a caller can say so rather than
+   * present a partial answer as the whole truth. Reading is all this does, and
+   * it stops at the first failed page instead of retrying - a scan that ends
+   * early is reported as incomplete, which is exactly what it is.
+   */
+  async discoverKeywords(options?: {
+    limit?: number;
+    onProgress?: (scanned: number, total: number) => void;
+    signal?: AbortSignal;
+  }): Promise<{ keywords: Record<string, number>; scanned: number; total: number; complete: boolean }> {
+    const cap = Math.max(0, options?.limit ?? DEFAULT_KEYWORD_SCAN_LIMIT);
+    const pageSize = Math.max(1, Math.min(500, this.getMaxObjectsInGet()));
+    const keywords: Record<string, number> = {};
+    let scanned = 0;
+    let total = 0;
+    let complete = false;
+
+    while (scanned < cap) {
+      if (options?.signal?.aborted) break;
+
+      try {
+        const response = await this.request([
+          ["Email/query", {
+            accountId: this.accountId,
+            sort: [{ property: "receivedAt", isAscending: false }],
+            limit: Math.min(pageSize, cap - scanned),
+            position: scanned,
+            calculateTotal: scanned === 0,
+          }, "0"],
+          ["Email/get", {
+            accountId: this.accountId,
+            "#ids": { resultOf: "0", name: "Email/query", path: "/ids" },
+            properties: ["keywords"],
+          }, "1"],
+        ]);
+
+        const queryResponse = response.methodResponses?.[0]?.[1];
+        const getResponse = response.methodResponses?.[1]?.[1];
+        const ids: string[] = queryResponse?.ids || [];
+        if (scanned === 0) total = queryResponse?.total ?? 0;
+
+        const list = (getResponse?.list || []) as Array<{ keywords?: Record<string, boolean> }>;
+        for (const email of list) {
+          for (const [keyword, isSet] of Object.entries(email.keywords || {})) {
+            if (isSet) keywords[keyword] = (keywords[keyword] ?? 0) + 1;
+          }
+        }
+
+        // Page by what the query returned, not by what the get did: a message
+        // destroyed between the two lands in `notFound` and would otherwise
+        // shift every later page by one and skip a message per gap.
+        scanned += ids.length;
+        options?.onProgress?.(scanned, Math.max(total, scanned));
+
+        // A short page is the end of the list, however much `total` claimed.
+        if (ids.length === 0 || ids.length < Math.min(pageSize, cap - (scanned - ids.length))) {
+          complete = true;
+          break;
+        }
+      } catch (error) {
+        console.error('Failed to scan keywords:', error);
+        break;
+      }
+    }
+
+    return { keywords, scanned, total: Math.max(total, scanned), complete };
   }
 
   /**
    * Per-tab unread counts for message-list category tabs. One Email/query
-   * (limit 0, calculateTotal) per tab, batched in a single request. Each
-   * entry's `filter` is the tab's resolved FilterCondition/FilterOperator
-   * (null = no extra condition, i.e. all unread in the mailbox).
+   * (limit 0, calculateTotal) per tab, batched into as few requests as the
+   * server's method-call ceiling allows. Each entry's `filter` is the tab's
+   * resolved FilterCondition/FilterOperator (null = no extra condition, i.e.
+   * all unread in the mailbox).
    */
   async getCategoryUnreadCounts(
     mailboxId: string,
@@ -1324,31 +1516,34 @@ export class JMAPClient implements IJMAPClient {
   ): Promise<Record<string, number>> {
     if (tabs.length === 0) return {};
     const targetAccountId = accountId || this.accountId;
-    try {
-      const methodCalls: JMAPMethodCall[] = tabs.map((tab, i) => {
-        const conditions: Record<string, unknown>[] = [
-          { inMailbox: mailboxId },
-          { notKeyword: "$seen" },
-        ];
-        if (tab.filter) conditions.push(tab.filter);
-        return ["Email/query", {
-          accountId: targetAccountId,
-          filter: { operator: "AND", conditions },
-          limit: 0,
-          calculateTotal: true,
-        }, `tab_${i}`];
-      });
+    const result: Record<string, number> = {};
 
-      const response = await this.request(methodCalls);
-      const result: Record<string, number> = {};
-      for (let i = 0; i < tabs.length; i++) {
-        result[tabs[i].id] = response.methodResponses?.[i]?.[1]?.total ?? 0;
+    for (const batch of batched(tabs, this.getMaxCallsInRequest())) {
+      try {
+        const methodCalls: JMAPMethodCall[] = batch.map((tab, i) => {
+          const conditions: Record<string, unknown>[] = [
+            { inMailbox: mailboxId },
+            { notKeyword: "$seen" },
+          ];
+          if (tab.filter) conditions.push(tab.filter);
+          return ["Email/query", {
+            accountId: targetAccountId,
+            filter: { operator: "AND", conditions },
+            limit: 0,
+            calculateTotal: true,
+          }, `tab_${i}`];
+        });
+
+        const response = await this.request(methodCalls);
+        for (let i = 0; i < batch.length; i++) {
+          result[batch[i].id] = response.methodResponses?.[i]?.[1]?.total ?? 0;
+        }
+      } catch (error) {
+        console.error('Failed to get category tab counts:', error);
       }
-      return result;
-    } catch (error) {
-      console.error('Failed to get category tab counts:', error);
-      return {};
     }
+
+    return result;
   }
 
   async getEmail(emailId: string, accountId?: string): Promise<Email | null> {
@@ -1464,10 +1659,12 @@ export class JMAPClient implements IJMAPClient {
   async batchMarkAsRead(emailIds: string[], read: boolean = true, accountId?: string): Promise<void> {
     if (emailIds.length === 0) return;
 
-    const updates = Object.fromEntries(emailIds.map(id => [id, { "keywords/$seen": read }]));
-    await this.request([
-      ["Email/set", { accountId: accountId || this.accountId, update: updates }, "0"],
-    ]);
+    for (const batch of batched(emailIds, this.getMaxObjectsInSet())) {
+      const updates = Object.fromEntries(batch.map(id => [id, { "keywords/$seen": read }]));
+      await this.request([
+        ["Email/set", { accountId: accountId || this.accountId, update: updates }, "0"],
+      ]);
+    }
   }
 
   async toggleStar(emailId: string, starred: boolean, accountId?: string): Promise<void> {
@@ -1529,10 +1726,12 @@ export class JMAPClient implements IJMAPClient {
    */
   async batchUpdateKeywords(emailIds: string[], patch: Record<string, boolean | null>, accountId?: string): Promise<void> {
     if (emailIds.length === 0 || Object.keys(patch).length === 0) return;
-    const update = Object.fromEntries(emailIds.map(id => [id, { ...patch }]));
-    await this.request([
-      ["Email/set", { accountId: accountId || this.accountId, update }, "0"],
-    ]);
+    for (const batch of batched(emailIds, this.getMaxObjectsInSet())) {
+      const update = Object.fromEntries(batch.map(id => [id, { ...patch }]));
+      await this.request([
+        ["Email/set", { accountId: accountId || this.accountId, update }, "0"],
+      ]);
+    }
   }
 
   async migrateKeyword(oldKeyword: string, newKeyword: string): Promise<number> {
@@ -1562,9 +1761,7 @@ export class JMAPClient implements IJMAPClient {
     if (allIds.length === 0) return 0;
 
     // Batch update: remove old keyword, add new keyword using per-property patches
-    const updateBatchSize = 50;
-    for (let i = 0; i < allIds.length; i += updateBatchSize) {
-      const batch = allIds.slice(i, i + updateBatchSize);
+    for (const batch of batched(allIds, this.getMaxObjectsInSet())) {
       const update: Record<string, Record<string, boolean | null>> = {};
       for (const id of batch) {
         update[id] = {
@@ -1608,12 +1805,14 @@ export class JMAPClient implements IJMAPClient {
   async batchDeleteEmails(emailIds: string[], accountId?: string): Promise<void> {
     if (emailIds.length === 0) return;
 
-    await this.request([
-      ["Email/set", {
-        accountId: accountId || this.accountId,
-        destroy: emailIds,
-      }, "0"],
-    ]);
+    for (const batch of batched(emailIds, this.getMaxObjectsInSet())) {
+      await this.request([
+        ["Email/set", {
+          accountId: accountId || this.accountId,
+          destroy: batch,
+        }, "0"],
+      ]);
+    }
   }
 
   async batchMoveEmails(emailIds: string[], toMailboxId: string, accountId?: string, markAsRead?: boolean): Promise<void> {
@@ -1624,10 +1823,12 @@ export class JMAPClient implements IJMAPClient {
       if (markAsRead) patch["keywords/$seen"] = true;
       return patch;
     };
-    const updates = Object.fromEntries(emailIds.map(id => [id, buildPatch()]));
-    await this.request([
-      ["Email/set", { accountId: accountId || this.accountId, update: updates }, "0"],
-    ]);
+    for (const batch of batched(emailIds, this.getMaxObjectsInSet())) {
+      const updates = Object.fromEntries(batch.map(id => [id, buildPatch()]));
+      await this.request([
+        ["Email/set", { accountId: accountId || this.accountId, update: updates }, "0"],
+      ]);
+    }
   }
 
   async batchArchiveEmails(
@@ -1705,35 +1906,59 @@ export class JMAPClient implements IJMAPClient {
       updates[emailId] = { mailboxIds: { [destId]: true } };
     }
 
-    const methodCalls: JMAPMethodCall[] = [];
+    // Creation ids are scoped to the request that introduced them (RFC 8620
+    // §3.3), so "#<cid>" only resolves in the request carrying the Mailbox/set:
+    // the folders are created alongside the first batch of messages, and the
+    // ids they were assigned are substituted into every later batch.
+    const updateBatches = batched(Object.entries(updates), this.getMaxObjectsInSet());
     const hasCreates = Object.keys(createEntries).length > 0;
-    if (hasCreates) {
-      methodCalls.push(['Mailbox/set', { accountId: targetAccountId, create: createEntries }, '0']);
-    }
-    methodCalls.push(['Email/set', { accountId: targetAccountId, update: updates }, String(methodCalls.length)]);
+    let createdIdFor: Record<string, string> = {};
 
-    const response = await this.request(methodCalls);
+    for (let i = 0; i < updateBatches.length; i++) {
+      const batch: Array<[string, { mailboxIds: Record<string, true> }]> = i === 0
+        ? updateBatches[i]
+        : updateBatches[i].map(([emailId, patch]) => {
+          const [destId] = Object.keys(patch.mailboxIds);
+          const resolved = createdIdFor[destId];
+          return [emailId, resolved ? { mailboxIds: { [resolved]: true } as Record<string, true> } : patch];
+        });
 
-    if (hasCreates) {
-      const mailboxResult = response.methodResponses?.[0]?.[1];
-      const notCreated = mailboxResult?.notCreated as Record<string, { type?: string; properties?: string[]; description?: string }> | undefined;
-      const failures = notCreated ? Object.entries(notCreated) : [];
-      if (failures.length > 0) {
-        const [cid, err] = failures[0];
-        const parts = [err.type || 'unknown'];
-        if (err.properties?.length) parts.push(`properties=[${err.properties.join(', ')}]`);
-        if (err.description) parts.push(err.description);
-        throw new Error(`Failed to create archive folder '${cid}': ${parts.join(' – ')}`);
+      const methodCalls: JMAPMethodCall[] = [];
+      const withCreates = hasCreates && i === 0;
+      if (withCreates) {
+        methodCalls.push(['Mailbox/set', { accountId: targetAccountId, create: createEntries }, '0']);
       }
-    }
+      methodCalls.push(['Email/set', { accountId: targetAccountId, update: Object.fromEntries(batch) }, String(methodCalls.length)]);
 
-    const emailIdx = hasCreates ? 1 : 0;
-    const emailResult = response.methodResponses?.[emailIdx]?.[1];
-    const notUpdated = emailResult?.notUpdated as Record<string, { type?: string; description?: string }> | undefined;
-    const emailFailures = notUpdated ? Object.entries(notUpdated) : [];
-    if (emailFailures.length > 0) {
-      const [id, err] = emailFailures[0];
-      throw new Error(`Failed to move ${emailFailures.length} email(s), first: ${id} – ${err.type || 'unknown'}${err.description ? ` (${err.description})` : ''}`);
+      const response = await this.request(methodCalls);
+
+      if (withCreates) {
+        const mailboxResult = response.methodResponses?.[0]?.[1];
+        const notCreated = mailboxResult?.notCreated as Record<string, { type?: string; properties?: string[]; description?: string }> | undefined;
+        const failures = notCreated ? Object.entries(notCreated) : [];
+        if (failures.length > 0) {
+          const [cid, err] = failures[0];
+          const parts = [err.type || 'unknown'];
+          if (err.properties?.length) parts.push(`properties=[${err.properties.join(', ')}]`);
+          if (err.description) parts.push(err.description);
+          throw new Error(`Failed to create archive folder '${cid}': ${parts.join(' – ')}`);
+        }
+        const created = (mailboxResult?.created || {}) as Record<string, { id?: string }>;
+        createdIdFor = Object.fromEntries(
+          Object.entries(created)
+            .filter(([, mailbox]) => !!mailbox?.id)
+            .map(([cid, mailbox]) => [`#${cid}`, mailbox.id!]),
+        );
+      }
+
+      const emailIdx = withCreates ? 1 : 0;
+      const emailResult = response.methodResponses?.[emailIdx]?.[1];
+      const notUpdated = emailResult?.notUpdated as Record<string, { type?: string; description?: string }> | undefined;
+      const emailFailures = notUpdated ? Object.entries(notUpdated) : [];
+      if (emailFailures.length > 0) {
+        const [id, err] = emailFailures[0];
+        throw new Error(`Failed to move ${emailFailures.length} email(s), first: ${id} – ${err.type || 'unknown'}${err.description ? ` (${err.description})` : ''}`);
+      }
     }
   }
 
@@ -1758,15 +1983,19 @@ export class JMAPClient implements IJMAPClient {
 
   async emptyMailbox(mailboxId: string, accountId?: string): Promise<number> {
     const targetAccountId = accountId || this.accountId;
+    const batchSize = Math.min(500, this.getMaxObjectsInSet());
     let totalDestroyed = 0;
-    let hasMore = true;
 
-    while (hasMore) {
+    // Destroy in batches until the mailbox is empty. Never gate the loop on
+    // Email/query's `total`: it is only guaranteed when `calculateTotal` is
+    // requested, and Stalwart omits it otherwise, which used to stop the loop
+    // after the first batch and leave folders with >500 emails mostly intact.
+    while (true) {
       const response = await this.request([
         ["Email/query", {
           accountId: targetAccountId,
           filter: { inMailbox: mailboxId },
-          limit: 500,
+          limit: batchSize,
         }, "0"],
         ["Email/set", {
           accountId: targetAccountId,
@@ -1776,10 +2005,16 @@ export class JMAPClient implements IJMAPClient {
 
       const queryResult = response.methodResponses?.[0]?.[1];
       const setResult = response.methodResponses?.[1]?.[1];
+      const found: string[] = queryResult?.ids || [];
       const destroyed = setResult?.destroyed?.length || 0;
       totalDestroyed += destroyed;
 
-      hasMore = destroyed > 0 && (queryResult?.total || 0) > destroyed;
+      // Nothing left, or the server refused everything in this batch (missing
+      // permission, immutable mail) — stop instead of looping forever on the
+      // same ids.
+      if (found.length === 0 || destroyed === 0) break;
+      // A short page means we just handled the tail of the mailbox.
+      if (found.length < batchSize) break;
     }
 
     return totalDestroyed;
@@ -1787,6 +2022,7 @@ export class JMAPClient implements IJMAPClient {
 
   async markMailboxAsRead(mailboxId: string, accountId?: string): Promise<number> {
     const targetAccountId = accountId || this.accountId;
+    const pageSize = Math.min(500, this.getMaxObjectsInSet());
     let totalMarked = 0;
     let hasMore = true;
 
@@ -1801,7 +2037,7 @@ export class JMAPClient implements IJMAPClient {
               { notKeyword: "$seen" },
             ],
           },
-          limit: 500,
+          limit: pageSize,
         }, "0"],
       ]);
 
@@ -1817,7 +2053,7 @@ export class JMAPClient implements IJMAPClient {
       ]);
 
       totalMarked += ids.length;
-      hasMore = ids.length === 500;
+      hasMore = ids.length === pageSize;
     }
 
     return totalMarked;
@@ -1826,6 +2062,7 @@ export class JMAPClient implements IJMAPClient {
   async markAllAsRead(excludeMailboxIds: string[] = [], accountId?: string): Promise<number> {
     const targetAccountId = accountId || this.accountId;
     const excludeSet = new Set(excludeMailboxIds);
+    const pageSize = Math.min(500, this.getMaxObjectsInGet(), this.getMaxObjectsInSet());
     let totalMarked = 0;
     let hasMore = true;
     let position = 0;
@@ -1835,7 +2072,7 @@ export class JMAPClient implements IJMAPClient {
         ["Email/query", {
           accountId: targetAccountId,
           filter: { notKeyword: "$seen" },
-          limit: 500,
+          limit: pageSize,
           position,
         }, "0"],
         ["Email/get", {
@@ -1871,7 +2108,7 @@ export class JMAPClient implements IJMAPClient {
         totalMarked += targetIds.length;
       }
 
-      hasMore = ids.length === 500;
+      hasMore = ids.length === pageSize;
       position += ids.length;
     }
 
@@ -2183,14 +2420,19 @@ export class JMAPClient implements IJMAPClient {
     if (threadIds.length === 0) return [];
     try {
       const targetAccountId = accountId || this.accountId;
-      const response = await this.request([
-        ["Thread/get", { accountId: targetAccountId, ids: threadIds }, "0"],
-      ]);
+      const threads: Thread[] = [];
 
-      if (response.methodResponses?.[0]?.[0] === "Thread/get") {
-        return (response.methodResponses[0][1].list || []) as Thread[];
+      for (const batchIds of batched(threadIds, this.getMaxObjectsInGet())) {
+        const response = await this.request([
+          ["Thread/get", { accountId: targetAccountId, ids: batchIds }, "0"],
+        ]);
+
+        if (response.methodResponses?.[0]?.[0] === "Thread/get") {
+          threads.push(...((response.methodResponses[0][1].list || []) as Thread[]));
+        }
       }
-      return [];
+
+      return threads;
     } catch (error) {
       console.error('Failed to get threads:', error);
       return [];
@@ -2205,26 +2447,32 @@ export class JMAPClient implements IJMAPClient {
         return [];
       }
 
-      const response = await this.request([
-        ["Email/get", {
-          accountId: targetAccountId,
-          ids: thread.emailIds,
-          properties: [
-            ...EMAIL_LIST_PROPERTIES,
-            "textBody", "htmlBody", "bodyValues",
-            "attachments", "blobId", "sentAt", "bcc", "replyTo",
-            "messageId", "inReplyTo", "references", "headers", "bodyStructure",
-          ],
-          fetchTextBodyValues: true,
-          fetchHTMLBodyValues: true,
-          fetchAllBodyValues: true,
-          maxBodyValueBytes: 256000,
-        }, "0"],
-      ]);
+      const emails: Email[] = [];
 
-      if (response.methodResponses?.[0]?.[0] === "Email/get") {
-        const emails = response.methodResponses[0][1].list || [];
+      for (const batchIds of batched(thread.emailIds, this.getMaxObjectsInGet())) {
+        const response = await this.request([
+          ["Email/get", {
+            accountId: targetAccountId,
+            ids: batchIds,
+            properties: [
+              ...EMAIL_LIST_PROPERTIES,
+              "textBody", "htmlBody", "bodyValues",
+              "attachments", "blobId", "sentAt", "bcc", "replyTo",
+              "messageId", "inReplyTo", "references", "headers", "bodyStructure",
+            ],
+            fetchTextBodyValues: true,
+            fetchHTMLBodyValues: true,
+            fetchAllBodyValues: true,
+            maxBodyValueBytes: 256000,
+          }, "0"],
+        ]);
 
+        if (response.methodResponses?.[0]?.[0] === "Email/get") {
+          emails.push(...(response.methodResponses[0][1].list || []));
+        }
+      }
+
+      if (emails.length > 0) {
         if (accountId && accountId !== this.accountId) {
           namespaceMailboxIds(emails, accountId);
         }
@@ -2449,9 +2697,9 @@ export class JMAPClient implements IJMAPClient {
 
     interface EmailDraft {
       from: { name?: string; email: string }[];
-      to: { email: string }[];
-      cc?: { email: string }[];
-      bcc?: { email: string }[];
+      to: { name?: string; email: string }[];
+      cc?: { name?: string; email: string }[];
+      bcc?: { name?: string; email: string }[];
       subject: string;
       keywords: Record<string, boolean>;
       mailboxIds: Record<string, boolean>;
@@ -2464,9 +2712,12 @@ export class JMAPClient implements IJMAPClient {
     const sanitizedFromName = sanitizeIdentityDisplayName(fromName);
     const emailData: EmailDraft = {
       from: [{ ...(sanitizedFromName ? { name: sanitizedFromName } : {}), email: fromEmail || this.username }],
-      to: to.map(email => ({ email })),
-      cc: cc?.length ? cc.map(email => ({ email })) : undefined,
-      bcc: bcc?.length ? bcc.map(email => ({ email })) : undefined,
+      // "Name <addr>" must be split into the two JMAP fields: storing the whole
+      // mailbox as the address makes the server treat the display name as part
+      // of the addr-spec, and the draft goes out to `Name<addr` (#672).
+      to: to.map(parseRecipientString),
+      cc: cc?.length ? cc.map(parseRecipientString) : undefined,
+      bcc: bcc?.length ? bcc.map(parseRecipientString) : undefined,
       subject,
       keywords: { "$seen": true, "$draft": true },
       mailboxIds: { [draftsMailbox.id]: true },
@@ -2707,6 +2958,7 @@ export class JMAPClient implements IJMAPClient {
     let createdEmailId: string | undefined;
     let emailSubmissionId: string | undefined;
     let serverSendAt: string | undefined;
+    let filingError: string | undefined;
 
     if (response.methodResponses) {
       for (const [methodName, result] of response.methodResponses) {
@@ -2740,6 +2992,24 @@ export class JMAPClient implements IJMAPClient {
           );
         }
 
+        // Post-submission filing problems (the implicit Email/set from
+        // onSuccessUpdateEmail, or destroying the old draft) must not fail
+        // the send - the message already left - but they must not stay
+        // silent either: a silently rejected filing/cleanup is exactly how
+        // "sent mail still sits in Drafts" reports look (#592, #588's
+        // sibling note in 4dc76bbb). Log the details and surface a warning
+        // to the caller.
+        if (result.notUpdated && Object.keys(result.notUpdated).length) {
+          console.error(`[sendEmail] ${methodName} notUpdated:`, JSON.stringify(result.notUpdated, null, 2));
+          const first = Object.values(result.notUpdated as Record<string, { type?: string; description?: string }>)[0];
+          filingError = filingError ?? (first?.description || first?.type || 'post-send filing failed');
+        }
+        if (result.notDestroyed && Object.keys(result.notDestroyed).length) {
+          console.error(`[sendEmail] ${methodName} notDestroyed (old draft):`, JSON.stringify(result.notDestroyed, null, 2));
+          const first = Object.values(result.notDestroyed as Record<string, { type?: string; description?: string }>)[0];
+          filingError = filingError ?? (first?.description || first?.type || 'old draft cleanup failed');
+        }
+
         if (methodName === 'Email/set' && result.created?.[emailId]?.id) {
           createdEmailId = result.created[emailId].id;
         }
@@ -2755,8 +3025,8 @@ export class JMAPClient implements IJMAPClient {
     }
 
     return delayedUntil
-      ? { scheduled: true, emailId: createdEmailId, emailSubmissionId, sendAt: serverSendAt }
-      : { scheduled: false, emailId: createdEmailId, emailSubmissionId };
+      ? { scheduled: true, emailId: createdEmailId, emailSubmissionId, sendAt: serverSendAt, filingError }
+      : { scheduled: false, emailId: createdEmailId, emailSubmissionId, filingError };
   }
 
   /**
@@ -3380,7 +3650,7 @@ export class JMAPClient implements IJMAPClient {
         method: 'POST',
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
         body: file,
-      });
+      }, { timeoutMs: JMAPClient.TRANSFER_TIMEOUT_MS });
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Failed to upload file: ${response.status} - ${errorText}`);
@@ -3535,7 +3805,7 @@ export class JMAPClient implements IJMAPClient {
 
   async fetchBlob(blobId: string, name?: string, type?: string, accountId?: string): Promise<Blob> {
     const url = this.getBlobDownloadUrl(blobId, name, type, accountId);
-    const response = await this.authenticatedFetch(url, {});
+    const response = await this.authenticatedFetch(url, {}, { timeoutMs: JMAPClient.TRANSFER_TIMEOUT_MS });
     if (!response.ok) {
       throw new Error(`Failed to fetch blob: ${response.status}`);
     }
@@ -3575,6 +3845,11 @@ export class JMAPClient implements IJMAPClient {
   getMaxObjectsInGet(): number {
     const coreCapability = this.capabilities["urn:ietf:params:jmap:core"] as { maxObjectsInGet?: number } | undefined;
     return coreCapability?.maxObjectsInGet || 500;
+  }
+
+  getMaxObjectsInSet(): number {
+    const coreCapability = this.capabilities["urn:ietf:params:jmap:core"] as { maxObjectsInSet?: number } | undefined;
+    return coreCapability?.maxObjectsInSet || 500;
   }
 
   getMaxDelayedSend(accountId?: string): number {
@@ -3701,12 +3976,28 @@ export class JMAPClient implements IJMAPClient {
     return this.hasCapability("urn:ietf:params:jmap:vacationresponse");
   }
 
-  supportsContacts(): boolean {
-    return this.hasCapability("urn:ietf:params:jmap:contacts");
+  supportsContacts(accountId?: string): boolean {
+    // Gate on the ACCOUNT capability: a server can advertise contacts while an
+    // account has its jmap-contact-* / dav-card-* permissions revoked. Shared accounts
+    // aren't always advertised per-account, so fall back to the server-wide
+    // capability - accountCapabilities is a subset of it (RFC 8620 s2).
+    const id = accountId || this.accountId;
+    const account = this.accounts[id];
+    if (!account) return false;
+    if (account.accountCapabilities?.["urn:ietf:params:jmap:contacts"]) return true;
+    return !account.isPersonal && !!this.capabilities?.["urn:ietf:params:jmap:contacts"];
   }
 
-  supportsCalendars(): boolean {
-    return this.hasCapability("urn:ietf:params:jmap:calendars");
+  supportsCalendars(accountId?: string): boolean {
+    // Gate on the ACCOUNT capability: a server can advertise calendars while an
+    // account has its jmap-calendar-* / dav-cal-* permissions revoked. Shared accounts
+    // aren't always advertised per-account, so fall back to the server-wide
+    // capability - accountCapabilities is a subset of it (RFC 8620 s2).
+    const id = accountId || this.accountId;
+    const account = this.accounts[id];
+    if (!account) return false;
+    if (account.accountCapabilities?.["urn:ietf:params:jmap:calendars"]) return true;
+    return !account.isPersonal && !!this.capabilities?.["urn:ietf:params:jmap:calendars"];
   }
 
   supportsSieve(): boolean {
@@ -4028,7 +4319,7 @@ export class JMAPClient implements IJMAPClient {
       // or are non-personal (shared/group) accounts - Stalwart doesn't
       // always advertise capabilities on group accounts even when they
       // have calendar resources.
-      if (account.accountCapabilities?.["urn:ietf:params:jmap:calendars"] || !account.isPersonal) {
+      if (account.accountCapabilities?.["urn:ietf:params:jmap:calendars"] || account.isPersonal === false) {
         accountIds.push(id);
       }
     }
@@ -4044,14 +4335,14 @@ export class JMAPClient implements IJMAPClient {
       // or are non-personal (shared/group) accounts - Stalwart doesn't
       // always advertise capabilities on group accounts even when they
       // have contact resources.
-      if (account.accountCapabilities?.["urn:ietf:params:jmap:contacts"] || !account.isPersonal) {
+      if (account.accountCapabilities?.["urn:ietf:params:jmap:contacts"] || account.isPersonal === false) {
         accountIds.push(id);
       }
     }
     return [primaryId, ...accountIds];
   }
 
-  async getAddressBooks(): Promise<AddressBook[]> {
+  async getAddressBooks(options?: { throwOnError?: boolean }): Promise<AddressBook[]> {
     try {
       const accountId = this.getContactsAccountId();
       const response = await this.request([
@@ -4061,9 +4352,13 @@ export class JMAPClient implements IJMAPClient {
       if (response.methodResponses?.[0]?.[0] === "AddressBook/get") {
         return (response.methodResponses[0][1].list || []) as AddressBook[];
       }
-      return [];
+      const methodError = response.methodResponses?.[0]?.[1];
+      throw new Error(methodError?.description || methodError?.type || "AddressBook/get failed");
     } catch (error) {
       console.error('Failed to get address books:', error);
+      // Callers that would treat an empty list as "nothing exists yet" must be
+      // able to tell a real empty account from a failed fetch (#730).
+      if (options?.throwOnError) throw error;
       return [];
     }
   }
@@ -4310,13 +4605,14 @@ export class JMAPClient implements IJMAPClient {
     return allContacts;
   }
 
-  async getContacts(addressBookId?: string): Promise<ContactCard[]> {
+  async getContacts(addressBookId?: string, options?: { throwOnError?: boolean }): Promise<ContactCard[]> {
     try {
       const accountId = this.getContactsAccountId();
       const filter = addressBookId ? { inAddressBook: addressBookId } : undefined;
       return await this.fetchPaginatedContacts(accountId, filter);
     } catch (error) {
       console.error('Failed to get contacts:', error);
+      if (options?.throwOnError) throw error;
       return [];
     }
   }
@@ -4547,6 +4843,7 @@ export class JMAPClient implements IJMAPClient {
 
       for (const accountId of accountIds) {
         const isPrimary = accountId === primaryId;
+        if (!isPrimary && this.calendarAccessDenied.has(accountId)) continue;
         const account = this.accounts[accountId];
 
         try {
@@ -4753,6 +5050,11 @@ export class JMAPClient implements IJMAPClient {
       .map((event) => normalizeCalendarEventLike(event));
   }
 
+  // Shared accounts the server rejected calendar access for - probed once,
+  // then skipped for the rest of the session (see getCalendarCapableAccountIds
+  // for why the fan-out has to probe on suspicion).
+  private calendarAccessDenied = new Set<string>();
+
   async queryAllCalendarEvents(
     filter: CalendarEventFilter,
     sort?: Array<{ property: string; isAscending: boolean }>,
@@ -4765,6 +5067,7 @@ export class JMAPClient implements IJMAPClient {
 
       for (const accountId of accountIds) {
         const isPrimary = accountId === primaryId;
+        if (!isPrimary && this.calendarAccessDenied.has(accountId)) continue;
         const account = this.accounts[accountId];
 
         try {
@@ -4830,7 +5133,12 @@ export class JMAPClient implements IJMAPClient {
 
       if (queryResponse.methodResponses?.[0]?.[0] === "error") {
         const error = queryResponse.methodResponses[0][1];
-        throw new Error(error?.description || error?.type || "CalendarEvent/query failed");
+        // Keep the JMAP error type so the catch below can tell an expected
+        // access rejection apart from a genuine failure.
+        throw Object.assign(
+          new Error(error?.description || error?.type || "CalendarEvent/query failed"),
+          { jmapErrorType: error?.type },
+        );
       }
 
       const ids: string[] = queryResponse.methodResponses?.[0]?.[1]?.ids || [];
@@ -4874,6 +5182,18 @@ export class JMAPClient implements IJMAPClient {
 
       return filtered;
     } catch (error) {
+      // The fan-out over shared accounts probes on suspicion (see
+      // getCalendarCapableAccountIds) and may hit accounts that grant no
+      // calendar access at all. Remember the rejection and go quiet instead
+      // of re-probing - and re-logging - on every range change.
+      const type = (error as { jmapErrorType?: string } | null)?.jmapErrorType;
+      const denied = type === 'forbidden' || type === 'accountNotFound' ||
+        /not have access/i.test(error instanceof Error ? error.message : '');
+      if (targetAccountId && denied) {
+        this.calendarAccessDenied.add(targetAccountId);
+        debug.log('calendar', `No calendar access to account ${targetAccountId} - skipping it from now on`);
+        return [];
+      }
       console.error('Failed to query calendar events:', error);
       return [];
     }
@@ -5007,38 +5327,41 @@ export class JMAPClient implements IJMAPClient {
 
     const accountId = targetAccountId || this.getCalendarsAccountId();
 
-    // Build the create map: { "new-0": event0, "new-1": event1, ... }
-    const createMap: Record<string, Partial<CalendarEvent>> = {};
-    for (let i = 0; i < events.length; i++) {
-      const { originalId: _oi, originalCalendarIds: _oc, accountId: _ai, accountName: _an, isShared: _is, ...clean } = events[i] as CalendarEvent;
-      cleanRecurrenceRules(clean as unknown as Record<string, unknown>);
-      createMap[`new-${i}`] = clean;
-    }
-
     debug.log('calendar', 'CalendarEvent/batchCreate', { count: events.length, accountId });
-
-    // Never emit iMIP scheduling messages when importing. Imported events often
-    // carry an organizer/participants where the current user is the organizer;
-    // without this, Stalwart tries to send invitation emails to every attendee
-    // synchronously during CalendarEvent/set, which is both wrong (importing a
-    // calendar should not spam invites) and can block the request indefinitely,
-    // leaving the import spinner spinning forever (#411).
-    const response = await this.request([
-      ["CalendarEvent/set", { accountId, sendSchedulingMessages: false, create: createMap }, "0"]
-    ], this.calendarUsing());
 
     const createdIds: string[] = [];
     const failed: string[] = [];
+    const indexed = events.map((event, index) => ({ event, index }));
 
-    if (response.methodResponses?.[0]?.[0] === "CalendarEvent/set") {
-      const result = response.methodResponses[0][1];
-      for (let i = 0; i < events.length; i++) {
-        const key = `new-${i}`;
-        if (result.created?.[key]?.id) {
-          createdIds.push(result.created[key].id);
-        } else if (result.notCreated?.[key]) {
-          debug.warn('calendar', `CalendarEvent/batchCreate failed for ${key}`, result.notCreated[key]);
-          failed.push(key);
+    for (const batch of batched(indexed, this.getMaxObjectsInSet())) {
+      // Build the create map: { "new-0": event0, "new-1": event1, ... }
+      const createMap: Record<string, Partial<CalendarEvent>> = {};
+      for (const { event, index } of batch) {
+        const { originalId: _oi, originalCalendarIds: _oc, accountId: _ai, accountName: _an, isShared: _is, ...clean } = event as CalendarEvent;
+        cleanRecurrenceRules(clean as unknown as Record<string, unknown>);
+        createMap[`new-${index}`] = clean;
+      }
+
+      // Never emit iMIP scheduling messages when importing. Imported events often
+      // carry an organizer/participants where the current user is the organizer;
+      // without this, Stalwart tries to send invitation emails to every attendee
+      // synchronously during CalendarEvent/set, which is both wrong (importing a
+      // calendar should not spam invites) and can block the request indefinitely,
+      // leaving the import spinner spinning forever (#411).
+      const response = await this.request([
+        ["CalendarEvent/set", { accountId, sendSchedulingMessages: false, create: createMap }, "0"]
+      ], this.calendarUsing());
+
+      if (response.methodResponses?.[0]?.[0] === "CalendarEvent/set") {
+        const result = response.methodResponses[0][1];
+        for (const { index } of batch) {
+          const key = `new-${index}`;
+          if (result.created?.[key]?.id) {
+            createdIds.push(result.created[key].id);
+          } else if (result.notCreated?.[key]) {
+            debug.warn('calendar', `CalendarEvent/batchCreate failed for ${key}`, result.notCreated[key]);
+            failed.push(key);
+          }
         }
       }
     }
@@ -5047,21 +5370,24 @@ export class JMAPClient implements IJMAPClient {
       return { created: [], failed };
     }
 
-    // Fetch all created events in a single CalendarEvent/get
+    // Fetch the created events back for their server-assigned properties
     const refetchTimeZone = getUserTimeZone();
-    const getResponse = await this.request([
-      ["CalendarEvent/get", {
-        accountId,
-        properties: [...CALENDAR_EVENT_PROPERTIES],
-        ids: createdIds,
-        ...(refetchTimeZone ? { timeZone: refetchTimeZone } : {}),
-      }, "0"]
-    ], this.calendarUsing());
+    const createdEvents: CalendarEvent[] = [];
 
-    let createdEvents: CalendarEvent[] = [];
-    if (getResponse.methodResponses?.[0]?.[0] === "CalendarEvent/get") {
-      const list = getResponse.methodResponses[0][1].list || [];
-      createdEvents = list.map((e: CalendarEvent) => normalizeCalendarEventLike(e));
+    for (const batchIds of batched(createdIds, this.getMaxObjectsInGet())) {
+      const getResponse = await this.request([
+        ["CalendarEvent/get", {
+          accountId,
+          properties: [...CALENDAR_EVENT_PROPERTIES],
+          ids: batchIds,
+          ...(refetchTimeZone ? { timeZone: refetchTimeZone } : {}),
+        }, "0"]
+      ], this.calendarUsing());
+
+      if (getResponse.methodResponses?.[0]?.[0] === "CalendarEvent/get") {
+        const list = getResponse.methodResponses[0][1].list || [];
+        createdEvents.push(...list.map((e: CalendarEvent) => normalizeCalendarEventLike(e)));
+      }
     }
 
     debug.log('calendar', 'CalendarEvent/batchCreate result', {
@@ -5145,7 +5471,7 @@ export class JMAPClient implements IJMAPClient {
 
     if (response.methodResponses?.[0]?.[0] === "CalendarEvent/parse") {
       const result = response.methodResponses[0][1];
-      console.log('[PARSE DEBUG] CalendarEvent/parse raw result:', JSON.stringify(result, null, 2));
+      debug.log('calendar', '[CalendarEvent/parse] raw result:', result);
 
       if (result.notParsable && result.notParsable.includes(blobId)) {
         throw new Error("Invalid calendar file format");
@@ -5212,17 +5538,19 @@ export class JMAPClient implements IJMAPClient {
     if (eventIds.length === 0) return { destroyed: [], notDestroyed: [] };
 
     const accountId = targetAccountId || this.getCalendarsAccountId();
-    const response = await this.request([
-      ["CalendarEvent/set", { accountId, destroy: eventIds }, "0"]
-    ], this.calendarUsing());
-
     const destroyed: string[] = [];
     const notDestroyed: string[] = [];
 
-    if (response.methodResponses?.[0]?.[0] === "CalendarEvent/set") {
-      const result = response.methodResponses[0][1];
-      if (result.destroyed) destroyed.push(...result.destroyed);
-      if (result.notDestroyed) notDestroyed.push(...Object.keys(result.notDestroyed));
+    for (const batch of batched(eventIds, this.getMaxObjectsInSet())) {
+      const response = await this.request([
+        ["CalendarEvent/set", { accountId, destroy: batch }, "0"]
+      ], this.calendarUsing());
+
+      if (response.methodResponses?.[0]?.[0] === "CalendarEvent/set") {
+        const result = response.methodResponses[0][1];
+        if (result.destroyed) destroyed.push(...result.destroyed);
+        if (result.notDestroyed) notDestroyed.push(...Object.keys(result.notDestroyed));
+      }
     }
 
     return { destroyed, notDestroyed };
@@ -5481,7 +5809,7 @@ export class JMAPClient implements IJMAPClient {
   }
 
   private static FILE_NODE_PROPERTIES = [
-    "id", "parentId", "name", "type", "blobId", "size", "created", "updated",
+    "id", "parentId", "name", "type", "blobId", "size", "created", "modified",
     // Stalwart omits shareWith/myRights from FileNode/get unless requested
     // explicitly, so the share dialog and indicators can't see existing
     // shares without naming them here (same as CALENDAR_PROPERTIES).
@@ -5735,62 +6063,69 @@ export class JMAPClient implements IJMAPClient {
    * throws for per-node failures (only for a whole-method error).
    */
   async updateFileNodes(updates: Record<string, Partial<Pick<FileNode, 'name' | 'parentId'>>>): Promise<{ updated: string[]; notUpdated: Record<string, string> }> {
-    const ids = Object.keys(updates);
-    if (ids.length === 0) return { updated: [], notUpdated: {} };
+    const entries = Object.entries(updates);
+    if (entries.length === 0) return { updated: [], notUpdated: {} };
     const accountId = this.getFilesAccountId();
 
-    const response = await this.request(
-      [["FileNode/set", { accountId, update: updates }, "fns0"]],
-      this.fileUsing(),
-    );
-
-    const result = response.methodResponses?.[0];
-    if (!result || result[0] === "error") {
-      throw new Error(result?.[1]?.description || "FileNode/set update failed");
-    }
-
-    const updatedMap: Record<string, unknown> = result[1].updated || {};
-    const notUpdatedMap: Record<string, { description?: string }> = result[1].notUpdated || {};
+    const updated: string[] = [];
     const notUpdated: Record<string, string> = {};
-    for (const id of Object.keys(notUpdatedMap)) {
-      notUpdated[id] = notUpdatedMap[id]?.description || 'not updated';
+
+    for (const batch of batched(entries, this.getMaxObjectsInSet())) {
+      const response = await this.request(
+        [["FileNode/set", { accountId, update: Object.fromEntries(batch) }, "fns0"]],
+        this.fileUsing(),
+      );
+
+      const result = response.methodResponses?.[0];
+      if (!result || result[0] === "error") {
+        throw new Error(result?.[1]?.description || "FileNode/set update failed");
+      }
+
+      const updatedMap: Record<string, unknown> = result[1].updated || {};
+      const notUpdatedMap: Record<string, { description?: string }> = result[1].notUpdated || {};
+      for (const id of Object.keys(notUpdatedMap)) {
+        notUpdated[id] = notUpdatedMap[id]?.description || 'not updated';
+      }
+      // Servers may omit the `updated` map; treat anything not rejected as updated.
+      updated.push(...(Object.keys(updatedMap).length > 0
+        ? Object.keys(updatedMap)
+        : batch.map(([id]) => id).filter(id => !(id in notUpdated))));
     }
-    // Servers may omit the `updated` map; treat anything not rejected as updated.
-    const updated = Object.keys(updatedMap).length > 0
-      ? Object.keys(updatedMap)
-      : ids.filter(id => !(id in notUpdated));
+
     return { updated, notUpdated };
   }
 
   async destroyFileNodes(ids: string[]): Promise<{ destroyed: string[]; notDestroyed: string[] }> {
     const accountId = this.getFilesAccountId();
+    const destroyed: string[] = [];
 
-    const response = await this.request(
-      [["FileNode/set", {
-        accountId,
-        destroy: ids,
-        onDestroyRemoveChildren: true,
-      }, "fns0"]],
-      this.fileUsing(),
-    );
+    for (const batch of batched(ids, this.getMaxObjectsInSet())) {
+      const response = await this.request(
+        [["FileNode/set", {
+          accountId,
+          destroy: batch,
+          onDestroyRemoveChildren: true,
+        }, "fns0"]],
+        this.fileUsing(),
+      );
 
-    const result = response.methodResponses?.[0];
-    if (!result || result[0] === "error") {
-      throw new Error(result?.[1]?.description || "FileNode/set destroy failed");
+      const result = response.methodResponses?.[0];
+      if (!result || result[0] === "error") {
+        throw new Error(result?.[1]?.description || "FileNode/set destroy failed");
+      }
+
+      const notDestroyedMap: Record<string, { type?: string; description?: string }> = result[1].notDestroyed || {};
+      const notDestroyedIds = Object.keys(notDestroyedMap);
+
+      if (notDestroyedIds.length > 0) {
+        const firstError = notDestroyedMap[notDestroyedIds[0]];
+        throw new Error(firstError?.description || `Failed to delete ${notDestroyedIds.length} file(s)`);
+      }
+
+      destroyed.push(...(result[1].destroyed || []));
     }
 
-    const notDestroyedMap: Record<string, { type?: string; description?: string }> = result[1].notDestroyed || {};
-    const notDestroyedIds = Object.keys(notDestroyedMap);
-
-    if (notDestroyedIds.length > 0) {
-      const firstError = notDestroyedMap[notDestroyedIds[0]];
-      throw new Error(firstError?.description || `Failed to delete ${notDestroyedIds.length} file(s)`);
-    }
-
-    return {
-      destroyed: result[1].destroyed || [],
-      notDestroyed: [],
-    };
+    return { destroyed, notDestroyed: [] };
   }
 
   async copyFileNode(id: string, newName: string, parentId: string | null): Promise<FileNode> {
@@ -5914,18 +6249,29 @@ export class JMAPClient implements IJMAPClient {
       .replace('{closeafter}', 'no')
       .replace('{ping}', '30');
 
-    this.sseAbortController = new AbortController();
+    // Each attempt tracks its own controller. When closePushNotifications
+    // aborts a connect that is still in flight (every account switch tears
+    // down and re-creates push for all connected clients), the rejection
+    // lands in the catch below AFTER the next attempt has already been set
+    // up - treating it as a network failure there would spawn an
+    // unsupervised polling interval and, via fallbackToPolling nulling
+    // sseAbortController, orphan the replacement connection.
+    const controller = new AbortController();
+    this.sseAbortController = controller;
 
     this.authenticatedFetch(url, {
       headers: { 'Accept': 'text/event-stream' },
-      signal: this.sseAbortController.signal,
+      signal: controller.signal,
     }).then(response => {
+      if (controller.signal.aborted) return;
       if (!response.ok || !response.body) {
         this.fallbackToPolling();
         return;
       }
-      this.readSSEStream(response.body);
+      this.readSSEStream(response.body, controller);
     }).catch((error) => {
+      // Intentional close, not a failure - no polling fallback.
+      if (controller.signal.aborted) return;
       if (error instanceof RateLimitError) {
         this.sseAbortController = null;
         this.scheduleSSEReconnect();
@@ -5935,7 +6281,7 @@ export class JMAPClient implements IJMAPClient {
     });
   }
 
-  private async readSSEStream(body: ReadableStream<Uint8Array>): Promise<void> {
+  private async readSSEStream(body: ReadableStream<Uint8Array>, controller: AbortController): Promise<void> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -5964,8 +6310,10 @@ export class JMAPClient implements IJMAPClient {
 
     this.stopSSEPingMonitor();
 
-    // Stream ended - reconnect unless we were intentionally closed
-    if (this.sseAbortController && !this.sseAbortController.signal.aborted) {
+    // Stream ended - reconnect only if this stream is still the current one
+    // and was not intentionally closed. A superseded stream must not spawn a
+    // second connection next to its replacement.
+    if (this.sseAbortController === controller && !controller.signal.aborted) {
       this.scheduleSSEReconnect();
     }
   }
@@ -6197,12 +6545,35 @@ export class JMAPClient implements IJMAPClient {
     }
   }
 
+  /**
+   * Drop and rebuild an SSE stream that has gone quiet past the ping deadline.
+   *
+   * The ping monitor already does this, but it is a `setInterval`, and a
+   * suspended tab - an iOS home-screen web app in particular - freezes its
+   * timers along with everything else. Coming back to a page whose push
+   * connection died while it slept, the monitor needs up to a full tick just to
+   * notice, and the connection it is holding is one the OS already tore down.
+   * Checking on the way back in makes the recovery immediate rather than
+   * leaving the app on a socket that will never deliver another byte.
+   */
+  private recycleStaleSSE(): void {
+    if (this.intentionallyDisconnected) return;
+    if (!this.sseAbortController) return;
+    if (Date.now() - this.lastSSEActivity <= JMAPClient.SSE_PING_TIMEOUT) return;
+
+    this.stopSSEPingMonitor();
+    this.sseAbortController.abort();
+    this.sseAbortController = null;
+    this.scheduleSSEReconnect();
+  }
+
   private setupBrowserEventListeners(): void {
     if (typeof document !== 'undefined') {
       this.visibilityHandler = () => {
         if (!document.hidden) {
           // Tab became visible - immediately check for state changes
           this.checkForStateChanges();
+          this.recycleStaleSSE();
         }
       };
       document.addEventListener('visibilitychange', this.visibilityHandler);
@@ -6325,7 +6696,7 @@ export class JMAPClient implements IJMAPClient {
   /** Fetch blob content as an ArrayBuffer (for S/MIME byte processing). */
   async fetchBlobArrayBuffer(blobId: string, name?: string, type?: string, accountId?: string): Promise<ArrayBuffer> {
     const url = this.getBlobDownloadUrl(blobId, name, type, accountId);
-    const response = await this.authenticatedFetch(url, {});
+    const response = await this.authenticatedFetch(url, {}, { timeoutMs: JMAPClient.TRANSFER_TIMEOUT_MS });
     if (!response.ok) {
       throw new Error(`Failed to fetch blob: ${response.status}`);
     }
@@ -6338,6 +6709,43 @@ export class JMAPClient implements IJMAPClient {
    * a shared mailbox owned by another user). When omitted, falls back to the
    * client's own primary account.
    */
+  async copyEmailAcrossAccounts(
+    emailId: string,
+    fromAccountId: string,
+    toAccountId: string,
+    destMailboxId: string,
+  ): Promise<string> {
+    // Email/copy drops keywords unless the create sets them, so carry the
+    // source's over — otherwise the moved message shows up as unread.
+    const srcResp = await this.request([
+      ["Email/get", { accountId: fromAccountId, ids: [emailId], properties: ["keywords"] }, "0"],
+    ]);
+    const keywords = srcResp.methodResponses?.[0]?.[1]?.list?.[0]?.keywords ?? {};
+
+    // onSuccessDestroyOriginal is the spec-correct way to remove the source, but
+    // Stalwart currently destroys the copy's create-id instead of the source id,
+    // so the original is left behind — a duplicate on every cross-account move.
+    // Reported upstream (support.stalw.art #1150); this self-heals once fixed.
+    const response = await this.request([
+      ["Email/copy", {
+        fromAccountId,
+        accountId: toAccountId,
+        create: { c: { id: emailId, mailboxIds: { [destMailboxId]: true }, keywords } },
+        onSuccessDestroyOriginal: true,
+      }, "0"],
+    ]);
+    const res = response.methodResponses?.[0]?.[1];
+    const err = res?.notCreated?.c;
+    if (err) {
+      throw new Error(err.description || err.type || "Failed to copy email across accounts");
+    }
+    const id = res?.created?.c?.id;
+    if (!id) {
+      throw new Error("Email/copy succeeded but no ID returned");
+    }
+    return id;
+  }
+
   async importRawEmail(
     blob: Blob,
     mailboxIds: Record<string, boolean>,

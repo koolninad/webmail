@@ -122,7 +122,8 @@
     "mobile": {
       "search": "جستجو",
       "compose": "ایمیل جدید",
-      "go_back": "بازگشت"
+      "go_back": "بازگشت",
+      "toggle_menu": "تغییر وضعیت منو"
     },
     "clear_search": "پاک کردن جستجو",
     "vacation_active": "پاسخ‌گوی خودکار فعال است",
@@ -130,6 +131,8 @@
     "demo_reset": "بازنشانی",
     "demo_tour": "تور",
     "tags": "برچسب‌ها",
+    "show_all_tags": "نمایش همه ({count})",
+    "show_fewer_tags": "نمایش کمتر",
     "folders": "پوشه‌ها",
     "shared": "اشتراکی",
     "mail": "ایمیل",
@@ -298,6 +301,7 @@
     "print": "چاپ",
     "view_source": "مشاهده منبع",
     "export_email": "خروجی .eml",
+    "forward_as_attachment": "Forward as attachment",
     "import_email": "وارد کردن .eml یا .zip",
     "keyboard_shortcuts": "میانبرهای صفحه کلید (?)",
     "email_source": "منبع ایمیل",
@@ -324,13 +328,15 @@
     "view_contact": "مشاهده مخاطب",
     "message_details": "جزئیات پیام",
     "more_reply_options": "گزینه‌های بیشتر پاسخ",
-    "set_color": "تنظیم برچسب",
+    "set_tag": "تنظیم برچسب",
     "tag": "برچسب",
     "more_actions": "عملیات بیشتر",
     "previous": "قبلی",
     "next": "بعدی",
     "move_to": "انتقال به...",
-    "remove_color": "حذف برچسب",
+    "remove_tag": "حذف برچسب",
+    "tag_filter_placeholder": "فیلتر برچسب‌ها",
+    "tag_no_matches": "برچسب مطابقی یافت نشد",
     "more_count": "+{count} بیشتر",
     "characters_count": "{count} کاراکتر",
     "quick_reply_placeholder": "پاسخ سریع بنویسید...",
@@ -423,17 +429,6 @@
       "received": "دریافت شده",
       "message_id": "شناسه پیام",
       "list_info": "اطلاعات لیست"
-    },
-    "color_tag": {
-      "title": "برچسب رنگی",
-      "red": "قرمز",
-      "orange": "نارنجی",
-      "yellow": "زرد",
-      "green": "سبز",
-      "blue": "آبی",
-      "purple": "بنفش",
-      "pink": "صورتی",
-      "none": "هیچکدام"
     },
     "tooltips": {
       "reply": "پاسخ (r)",
@@ -641,7 +636,6 @@
     "save_as_template": "ذخیره به عنوان قالب",
     "validation": {
       "recipient_required": "یک گیرنده اضافه کنید",
-      "subject_required": "یک موضوع اضافه کنید",
       "body_required": "پیامی بنویسید یا فایلی پیوست کنید",
       "attachments_uploading": "پیوست‌ها هنوز در حال بارگذاری هستند — پس از اتمام ارسال می‌شود",
       "attachment_upload_failed": "ارسال نشد - بارگذاری یک پیوست ناموفق بود. آن را حذف کنید و دوباره تلاش کنید."
@@ -652,6 +646,7 @@
     "drop_files": "فایل‌ها را اینجا رها کنید",
     "show_less": "نمایش کمتر",
     "send_failed": "ارسال ایمیل ناموفق بود",
+    "send_timeout": "سرور دیگر پاسخ نمی‌دهد. پیش از ارسال دوباره، پوشهٔ ارسال‌شده‌ها را بررسی کنید — ممکن است پیام ارسال شده باشد.",
     "continue_draft": "ادامه پیش‌نویس",
     "close_draft_title": "ذخیره یا دور انداختن پیش‌نویس؟",
     "close_draft_message": "تغییرات ذخیره نشده دارید. ذخیره یا دور انداختن؟",
@@ -670,6 +665,13 @@
       "send_anyway": "ارسال به هر حال",
       "back": "بازگشت به ویرایش"
     },
+    "empty_subject": {
+      "title": "بدون موضوع ارسال شود؟",
+      "message": "این پیام موضوعی ندارد. با این حال ارسال شود؟",
+      "dont_ask_again": "دیگر نپرس",
+      "send_anyway": "ارسال به هر حال",
+      "back": "بازگشت به ویرایش"
+    },
     "schedule_send": "زمان‌بندی ارسال",
     "schedule_send_description": "زمان انتشار پیام توسط سرور را انتخاب کنید.",
     "schedule_send_required": "تاریخ و زمان را انتخاب کنید.",
@@ -685,7 +687,40 @@
     "recipient_email_placeholder": "آدرس ایمیل",
     "recipient_name_placeholder": "نام نمایشی",
     "autocomplete_search_server": "جستجو در سرور",
-    "autocomplete_searching": "در حال جستجو..."
+    "autocomplete_searching": "در حال جستجو...",
+    "toolbar": {
+      "bold": "پررنگ",
+      "italic": "کج",
+      "underline": "زیرخط‌دار",
+      "strikethrough": "خط‌خورده",
+      "text_color": "رنگ متن",
+      "remove_color": "حذف رنگ",
+      "heading_1": "سرفصل ۱",
+      "heading_2": "سرفصل ۲",
+      "bullet_list": "فهرست نشانه‌دار",
+      "ordered_list": "فهرست شماره‌دار",
+      "quote": "نقل‌قول",
+      "code_block": "بلوک کد",
+      "align_left": "تراز چپ",
+      "align_center": "وسط‌چین",
+      "align_right": "تراز راست",
+      "text_direction": "جهت متن (RTL/LTR)",
+      "link": "پیوند",
+      "table": "جدول",
+      "clear_formatting": "پاک کردن قالب‌بندی",
+      "undo": "واگرد",
+      "redo": "انجام دوباره",
+      "add_row_above": "افزودن ردیف در بالا",
+      "add_row_below": "افزودن ردیف در پایین",
+      "add_column_before": "افزودن ستون قبل",
+      "add_column_after": "افزودن ستون بعد",
+      "delete_row": "حذف ردیف",
+      "delete_column": "حذف ستون",
+      "toggle_header_row": "تغییر وضعیت ردیف سرصفحه",
+      "delete_table": "حذف جدول",
+      "pick_size": "انتخاب اندازه"
+    },
+    "send_filing_warning": "ارسال شد - اما پاک‌سازی پس از ارسال ناموفق بود، ممکن است پیش‌نویس قدیمی باقی بماند."
   },
   "confirm_dialog": {
     "confirm": "تأیید",
@@ -985,7 +1020,6 @@
       "title": "برچسب‌های ایمیل",
       "description": "برچسب‌ها را برای سازمان‌دهی ایمیل‌ها تعریف کنید",
       "add_keyword": "افزودن برچسب",
-      "reset_defaults": "بازنشانی به پیش‌فرض",
       "label_field": "نام نمایشی",
       "label_placeholder": "مثال: کاری، شخصی، فوری",
       "id_field": "شناسه برچسب",
@@ -998,7 +1032,34 @@
       "add": "افزودن",
       "cancel": "انصراف",
       "migrating": "در حال به‌روزرسانی برچسب روی ایمیل‌های موجود…",
-      "migration_error": "به‌روزرسانی برچسب ناموفق بود"
+      "migration_error": "به‌روزرسانی برچسب ناموفق بود",
+      "nesting": {
+        "label": "برچسب‌های تودرتو",
+        "description": "برچسب‌ها را زیر برچسب‌های دیگر قرار دهید و آن‌ها را به‌صورت درختی در نوار کناری نمایش دهید."
+      },
+      "parent_field": "برچسب والد",
+      "no_parent": "بدون برچسب والد",
+      "too_long": "این مسیر برچسب خیلی طولانی است (حداکثر {max} نویسه)",
+      "has_children_locked": "برچسب‌های دیگری زیر این برچسب قرار دارند، بنابراین نام و برچسب والد آن قفل است. ابتدا آن‌ها را جابه‌جا یا حذف کنید.",
+      "has_children_delete": "ابتدا برچسب‌های زیرمجموعهٔ این برچسب را حذف کنید",
+      "visibility_field": "نمایش در نوار کناری",
+      "visibility": {
+        "show": "نمایش",
+        "unread": "نمایش در صورت وجود خوانده‌نشده",
+        "hide": "پنهان کردن"
+      },
+      "unrecognized": {
+        "title": "بازیابی برچسب‌ها از سرور",
+        "description": "نام و رنگ برچسب‌ها در این مرورگر ذخیره می‌شود، اما خود برچسب‌ها به‌صورت کلیدواژه‌های JMAP روی ایمیل‌های شما قرار دارند. ایمیل‌ها را برای یافتن کلیدواژه‌هایی که هیچ برچسبی اینجا ندارند بررسی کنید و آن‌ها را دوباره اضافه کنید.",
+        "scan": "جست‌وجوی برچسب‌ها",
+        "rescan": "بررسی دوباره",
+        "scanning": "در حال بررسی… {scanned} از {total} ایمیل",
+        "none": "همهٔ برچسب‌های ایمیل‌های شما از قبل اینجا تعریف شده‌اند.",
+        "messages": "{count, plural, one {# ایمیل} other {# ایمیل}}",
+        "add_all": "افزودن همه ({count})",
+        "partial": "فقط {scanned} ایمیل جدیدتر از مجموع {total} بررسی شد. برچسب‌هایی که تنها در ایمیل‌های قدیمی‌تر به کار رفته‌اند ممکن است نمایش داده نشوند.",
+        "error": "بررسی ایمیل‌ها برای یافتن برچسب‌ها ناموفق بود."
+      }
     },
     "notifications": {
       "test_sound": "تست صدای اعلان",
@@ -1026,6 +1087,7 @@
         "disable": "غیرفعال کردن",
         "confirm_disable_title": "غیرفعال کردن اعلان‌های پس‌زمینه؟",
         "confirm_disable_message": "این دستگاه دیگر هشدار دریافت نمی‌کند",
+        "dismiss_aria": "رد کردن پیشنهاد اعلان‌ها",
         "ios_hint": "در iOS ابتدا سایت را به صفحه اصلی اضافه کنید"
       },
       "sound_selection": {
@@ -1277,6 +1339,10 @@
         "add": "افزودن",
         "remove": "حذف"
       },
+      "empty_subject_warning": {
+        "label": "هشدار موضوع خالی",
+        "description": "پیش از ارسال پیام بدون موضوع تأیید بگیرید."
+      },
       "hide_inline_image_attachments": {
         "label": "مخفی کردن تصاویر داخلی",
         "description": "عدم نمایش به عنوان پیوست"
@@ -1482,7 +1548,16 @@
         "inactive": "غیرفعال",
         "enabled": "فعال شد",
         "disabled_success": "غیرفعال شد",
-        "error": "خطا"
+        "error": "خطا",
+        "algorithm_label": "الگوریتم رمزنگاری",
+        "encrypt_on_append": "رمزنگاری ایمیل‌های جدید هنگام بارگذاری",
+        "allow_spam_training": "اجازه به آموزش هرزنامه پیش از رمزنگاری ایمیل‌ها",
+        "enable_encryption": "فعال‌سازی رمزنگاری",
+        "enable_tooltip": "فعال‌سازی رمزنگاری با این کلید",
+        "configure_title": "فعال‌سازی رمزنگاری با این کلید",
+        "enable_button": "فعال‌سازی",
+        "disable_tooltip": "غیرفعال‌سازی رمزنگاری",
+        "enabled_success": "فعال شد"
       },
       "email_client": {
         "title": "تنظیم برنامه ایمیل",
@@ -1502,6 +1577,13 @@
         "expired": "منقضی شده",
         "generating": "در حال تولید…",
         "error": "خطا"
+      },
+      "public_keys": {
+        "name_label": "نام کلید عمومی",
+        "name_placeholder": "مثال: کلید من",
+        "key_label": "کلید عمومی (S/MIME یا PGP با قالب ASCII)",
+        "key_placeholder": "کلید عمومی خود را اینجا بچسبانید",
+        "none": "هیچ کلید عمومی‌ای تنظیم نشده است"
       }
     },
     "identities": {
@@ -2000,8 +2082,7 @@
     "delete": "حذف",
     "mark_as_spam": "گزارش هرزنامه",
     "not_spam": "هرزنامه نیست",
-    "color_tag": "برچسب",
-    "remove_color": "حذف برچسب",
+    "tag": "برچسب",
     "items_selected": "{count} ایمیل انتخاب شده",
     "edit_draft": "ویرایش پیش‌نویس",
     "cancel_scheduled_send": "لغو ارسال",
@@ -2336,6 +2417,9 @@
       "section_address_book": "دفترچه",
       "select_address_book": "انتخاب دفترچه...",
       "section_identity": "نام و هویت",
+      "contact_type": "نوع مخاطب",
+      "type_person": "شخص",
+      "type_organization": "سازمان",
       "section_work": "کار و سازمان",
       "prefix": "پیشوند",
       "prefix_placeholder": "دکتر، مهندس",
@@ -2420,7 +2504,7 @@
       "cancel": "انصراف",
       "creating": "در حال ایجاد...",
       "updating": "در حال به‌روزرسانی...",
-      "name_required": "حداقل نام یا نام خانوادگی الزامی است",
+      "name_required": "نام، نام خانوادگی یا سازمان را وارد کنید",
       "email_invalid": "لطفاً یک آدرس ایمیل معتبر وارد کنید",
       "email_error_inline": "فرمت ایمیل نامعتبر است",
       "save_failed": "ذخیره مخاطب ناموفق بود",
@@ -3281,5 +3365,18 @@
     "install": "نصب",
     "dont_remind": "دیگر یادآوری نکن",
     "dismiss_aria": "رد کردن پیشنهاد نصب"
+  },
+  "deep_link": {
+    "message_not_found": "این پیام دیگر در دسترس نیست.",
+    "thread_not_found": "این گفتگو دیگر در دسترس نیست.",
+    "folder_not_found": "این پوشه دیگر در دسترس نیست.",
+    "event_not_found": "این رویداد دیگر در دسترس نیست.",
+    "file_not_found": "این فایل دیگر در دسترس نیست.",
+    "account_unavailable": "برای باز کردن این پیوند، به آن حساب وارد شوید.",
+    "copy_message": "کپی پیوند پیام",
+    "copy_conversation": "کپی پیوند گفتگو",
+    "copy_event": "کپی پیوند رویداد",
+    "copied": "پیوند کپی شد",
+    "copy_failed": "کپی پیوند ممکن نشد"
   }
 }

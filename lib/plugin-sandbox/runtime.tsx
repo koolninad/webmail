@@ -29,6 +29,8 @@ import type {
 } from './protocol';
 import { themeSnapshotToCSS, type ThemeSnapshot } from './host-theme';
 import type { SlotName } from '../plugin-types';
+import { ContactCard } from '../jmap/types';
+import { EncryptionAtRestConfig, PublicKeyInput } from '@/stores/account-security-store';
 
 // ─── Module-scope state ──────────────────────────────────────
 
@@ -97,6 +99,11 @@ function uid(): string {
 // ─── Sandboxed API facade (calls flow to host via postMessage) ─
 
 const DEFAULT_API_TIMEOUT_MS = 30_000;
+// http.post / http.fetch can be carrying an attachment to an external store,
+// which is a transfer rather than a round-trip - 30s is not enough for the
+// files a plugin has any reason to offload. Still bounded so a hung host
+// can't leak the pending promise.
+const NETWORK_API_TIMEOUT_MS = 120_000;
 
 function callApi(method: string, args: unknown[], timeoutMs: number = DEFAULT_API_TIMEOUT_MS): Promise<unknown> {
   const id = uid();
@@ -165,8 +172,13 @@ function buildPluginApi(manifest: PluginManifest) {
       version: manifest.version,
       settings: { ...manifest.settings },
     },
-    webauthn: {
-      getOrCreate: (masterCredentialIdBytes?: number[], name?: string, displayName?: string) => callApi('webauthn.getOrCreate', [masterCredentialIdBytes, name, displayName], 0)
+    crypto: {
+      getPublicKeys: () => callApi('crypto.getPublicKeys', []),
+      createPublicKey: (input: PublicKeyInput) => callApi('crypto.createPublicKey', [input]),
+      removePublicKey: (keyId: string) => callApi('crypto.removePublicKey', [keyId]),
+      setEncryptionAtRest: (config: EncryptionAtRestConfig) => callApi('crypto.setEncryptionAtRest', [config]),
+      getEncryptionAtRest: () => callApi('crypto.getEncryptionAtRest', []),
+      getOrCreateWebAuthn: (masterCredentialIdBytes?: number[], name?: string, displayName?: string) => callApi('crypto.getOrCreateWebAuthn', [masterCredentialIdBytes, manifest.id, name, displayName], 0)
     },
     storage: {
       get: (key: string) => callApi('storage.get', [key]),
@@ -174,9 +186,18 @@ function buildPluginApi(manifest: PluginManifest) {
       remove: (key: string) => callApi('storage.remove', [key]),
       keys: () => callApi('storage.keys', []),
     },
+    user: {
+      getAccounts: () => callApi('user.getAccounts', []),
+      getIdentities: () => callApi('user.getIdentities', []),
+      logout: () => callApi('user.logout', []),
+    },
     http: {
-      post: (path: string, body: Record<string, unknown>) => callApi('http.post', [path, body]),
-      fetch: (url: string, init?: unknown) => callApi('http.fetch', [url, init]),
+      // A Blob/File body is sent as a binary request; options.headers may then
+      // carry Content-Type and X-Plugin-* metadata for the receiving route.
+      // Any other body keeps the stock JSON behaviour.
+      post: (path: string, body: Record<string, unknown> | Blob, options?: { headers?: Record<string, string> }) =>
+        callApi('http.post', [path, body, options], NETWORK_API_TIMEOUT_MS),
+      fetch: (url: string, init?: unknown) => callApi('http.fetch', [url, init], NETWORK_API_TIMEOUT_MS),
     },
     // Privileged-tier only (same-origin plugins). Calls throw for untrusted
     // plugins (the host refuses the method) — these power crypto plugins that
@@ -204,9 +225,18 @@ function buildPluginApi(manifest: PluginManifest) {
         opts?:  { keywords?: Record<string, boolean>; accountId?: string },
       ) => callApi('jmap.importRaw', [rawBytes, mailboxRoles, opts]),
     },
+    contacts: {
+      get: (contactId: string) => callApi('contact.get', [contactId]) as Promise<ContactCard>,
+      update: (contactId: string, updates: Partial<ContactCard>) => callApi('contact.update', [contactId, updates]),
+      create: (contact: ContactCard) => callApi('contact.create', [contact]) as Promise<string>,
+      search: (query: string) => callApi('contact.search', [query]) as Promise<ContactCard[]>,
+    },
     /**
      * Used to alterate files before they are uploaded to server.
      * Edited files are saved on indexedDB and remove once the upload to server begins.
+     * `get` needs the email:blob-read permission. `save` needs
+     * email:blob-write AND the privileged tier - replacing the bytes of a file
+     * the user is about to send is not something an untrusted plugin may do.
      */
     upfiles: {
       save: (formerFileId:string, file:File) =>

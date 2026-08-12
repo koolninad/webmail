@@ -52,9 +52,22 @@ export function ProComposeTabBody({ tabId, data }: ProComposeTabBodyProps) {
 
   const handleSend = useCallback(async (sendData: Parameters<NonNullable<React.ComponentProps<typeof EmailComposer>['onSend']>>[0]) => {
     if (!client) return;
+    // The Pro From dropdown lists identities from every connected account, so
+    // the chosen identity may belong to a different account than the active
+    // one. Submit through that account's own client - the identity id is only
+    // valid on its own server, and submitting on the active account's session
+    // makes the server sign with the wrong DKIM key (#461). The draft was
+    // already saved against the same account by the composer.
+    const sendClient = sendData.localAccountId
+      ? (useAuthStore.getState().getClientForAccount(sendData.localAccountId) ?? client)
+      : client;
+    // See the inline composer's handleEmailSend: a resolved onSend tells the
+    // composer the message is gone and it clears itself, so a genuine send
+    // failure has to propagate rather than be logged away (#702).
+    let submitted = false;
     try {
       const result = await sendEmail(
-        client,
+        sendClient,
         sendData.to,
         sendData.subject,
         sendData.body,
@@ -70,7 +83,9 @@ export function ProComposeTabBody({ tabId, data }: ProComposeTabBodyProps) {
         sendData.references,
         sendData.delayedUntil,
         sendData.envelopeMailFrom,
+        { localAccountId: sendData.localAccountId },
       );
+      submitted = true;
 
       if (result.scheduled) {
         await handleScheduledSendCreated();
@@ -116,6 +131,8 @@ export function ProComposeTabBody({ tabId, data }: ProComposeTabBodyProps) {
       closeTab(tabIdRef.current);
     } catch (error) {
       console.error('Failed to send email:', error);
+      // Post-send bookkeeping failing is cosmetic; the mail is already out.
+      if (!submitted) throw error;
       toast.error(t('notifications.error_sending'));
     }
   }, [client, sendEmail, closeTab, data.sourceEmailId, data.mode, t, handleScheduledSendCreated, refreshCurrentMailbox]);

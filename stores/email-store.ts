@@ -21,7 +21,16 @@ type ScheduledSubmissionMetadata = {
 
 const VIRTUAL_SCHEDULED_MAILBOX_ID = '__scheduled__';
 
-type PendingUndoSend = { submissionId: string; emailId?: string; identityId?: string; sendAt: string; isSmime: boolean };
+type PendingUndoSend = {
+  submissionId: string;
+  emailId?: string;
+  identityId?: string;
+  sendAt: string;
+  isSmime: boolean;
+  /** Local account that owns the submission, when the message was sent from
+   *  an identity belonging to a non-active account (#461). */
+  localAccountId?: string;
+};
 
 interface EmailStore {
   emails: Email[];
@@ -156,11 +165,19 @@ interface EmailStore {
   loadMoreEmails: (client: IJMAPClient) => Promise<void>;
   fetchEmailContent: (client: IJMAPClient, emailId: string) => Promise<Email | null>;
   fetchQuota: (client: IJMAPClient) => Promise<void>;
-  sendEmail: (client: IJMAPClient, to: string[], subject: string, body: string, cc?: string[], bcc?: string[], identityId?: string, fromEmail?: string, draftId?: string, fromName?: string, htmlBody?: string, attachments?: Array<{ blobId: string; name: string; type: string; size: number; disposition?: 'attachment' | 'inline'; cid?: string }>, inReplyTo?: string[], references?: string[], delayedUntil?: string, envelopeMailFrom?: string, options?: { requestReadReceipt?: boolean }) => Promise<SendEmailResult>;
+  sendEmail: (client: IJMAPClient, to: string[], subject: string, body: string, cc?: string[], bcc?: string[], identityId?: string, fromEmail?: string, draftId?: string, fromName?: string, htmlBody?: string, attachments?: Array<{ blobId: string; name: string; type: string; size: number; disposition?: 'attachment' | 'inline'; cid?: string }>, inReplyTo?: string[], references?: string[], delayedUntil?: string, envelopeMailFrom?: string, options?: { requestReadReceipt?: boolean; localAccountId?: string }) => Promise<SendEmailResult>;
   sendRawEmail: (client: IJMAPClient, rawMimeBlob: Blob, identityId: string, delayedUntil?: string, envelopeRecipients?: string[]) => Promise<SendEmailResult>;
   deleteEmail: (client: IJMAPClient, emailId: string, forceDelete?: boolean) => Promise<void>;
   markAsRead: (client: IJMAPClient, emailId: string, read: boolean) => Promise<void>;
   moveToMailbox: (client: IJMAPClient, emailId: string, mailboxId: string) => Promise<void>;
+  /**
+   * Move a single email, routing across the account boundary when the
+   * destination folder is owned by a different JMAP account (a delegated/shared
+   * mailbox, or a different connected account) — the "Move to" context-menu
+   * equivalent of what drag-and-drop already does. Falls back to the plain
+   * single-account `moveToMailbox` when source and destination share an account.
+   */
+  moveToMailboxCrossAware: (client: IJMAPClient, emailId: string, mailboxId: string) => Promise<void>;
   moveEmailsToMailbox: (client: IJMAPClient, emailIds: string[], mailboxId: string) => Promise<void>;
   moveThreadToMailbox: (client: IJMAPClient, emailId: string, mailboxId: string) => Promise<void>;
   /**
@@ -422,6 +439,23 @@ function resolveEmailActionContext(
     mailboxes,
     accountId: currentMailbox?.isShared ? currentMailbox.accountId : undefined,
   };
+}
+
+/**
+ * Local account id ("user@host") whose connected client owns `mailbox`.
+ * `mailbox.accountId` is the JMAP server's opaque id; map it back to a local
+ * client id, falling back to the viewing/active account — a delegated/shared
+ * folder has no separately-connected client, it's reached through the viewer's.
+ * Mirrors resolveDestAccountId in use-mailbox-drop.ts.
+ */
+function resolveDestLocalAccountId(mailbox: Mailbox): string | null {
+  const jmapId = mailbox.accountId;
+  if (jmapId) {
+    for (const [localId, client] of useAuthStore.getState().getAllConnectedClients()) {
+      if (client.getAccountId() === jmapId) return localId;
+    }
+  }
+  return useEmailStore.getState().viewingAccountId ?? useAuthStore.getState().activeAccountId;
 }
 
 /**
@@ -1337,7 +1371,16 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       set({
         isLoading: false,
         pendingUndoSend: result.scheduled && result.emailSubmissionId && result.sendAt
-          ? { submissionId: result.emailSubmissionId, emailId: result.emailId, identityId, sendAt: result.sendAt, isSmime: false }
+          ? {
+              submissionId: result.emailSubmissionId,
+              emailId: result.emailId,
+              identityId,
+              sendAt: result.sendAt,
+              isSmime: false,
+              // Cross-account send: undo/send-now must talk to the account that
+              // holds the submission, not the active one (#461).
+              localAccountId: options?.localAccountId,
+            }
           : get().pendingUndoSend,
       });
       return result;
@@ -1595,6 +1638,54 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
+  moveToMailboxCrossAware: async (client, emailId, destinationMailboxId) => {
+    const state = get();
+    const email = state.emails.find((e) => e.id === emailId);
+    if (!email) return;
+
+    const { mailboxes } = resolveEmailActionContext(email, client);
+    const find = (id: string) =>
+      mailboxes.find((mb) => mb.id === id) ?? state.mailboxes.find((mb) => mb.id === id);
+    const destMailbox = find(destinationMailboxId);
+    // A context-menu move acts on the visible list, so the source folder is the
+    // one currently open.
+    const sourceMailbox = find(state.selectedMailbox ?? '');
+
+    // Cross-account when the two folders live in different JMAP accounts (both
+    // own and shared mailboxes carry accountId, so this catches own↔shared too).
+    const isCrossAccount =
+      !!destMailbox &&
+      !!sourceMailbox?.accountId &&
+      !!destMailbox.accountId &&
+      sourceMailbox.accountId !== destMailbox.accountId;
+
+    if (!isCrossAccount) {
+      await get().moveToMailbox(client, emailId, destinationMailboxId);
+      return;
+    }
+
+    const destAccountId = resolveDestLocalAccountId(destMailbox!);
+    const sourceAccountId =
+      email.accountId ?? state.viewingAccountId ?? useAuthStore.getState().activeAccountId;
+    if (!destAccountId || !sourceAccountId) {
+      // Can't resolve the local endpoints — fall back rather than drop the mail.
+      await get().moveToMailbox(client, emailId, destinationMailboxId);
+      return;
+    }
+
+    // JMAP has no cross-account move: copy the raw message into the destination
+    // account's mailbox, then delete the original (crossAccountMoveEmails). The
+    // *Jmap* overrides target the owner account when a shared folder is reached
+    // through another user's client.
+    await get().crossAccountMoveEmails(
+      new Map([[sourceAccountId, [emailId]]]),
+      destAccountId,
+      destMailbox!.originalId ?? destMailbox!.id,
+      destMailbox!.isShared ? destMailbox!.accountId : undefined,
+      sourceMailbox?.isShared ? sourceMailbox.accountId : undefined,
+    );
+  },
+
   moveToMailbox: async (client, emailId, destinationMailboxId) => {
     try {
       const email = get().emails.find(e => e.id === emailId);
@@ -1763,9 +1854,23 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         // the source clean in the happy path.
         const results = await Promise.allSettled(
           emailIds.map(async (emailId) => {
-            // When the source is a delegated/shared mailbox, the email,
-            // its blob, and the destroy all live in the owner's JMAP
-            // account, not the source client's primary one.
+            // Delegated/shared folders: one client reaches both accounts, so a
+            // server-side Email/copy moves the message. A client can't stage a
+            // blob in a *delegated* account (blobNotFound), so the blob
+            // copy+import path below is only valid across separate login
+            // clients/servers.
+            if (sourceClient === destClient) {
+              await sourceClient.copyEmailAcrossAccounts(
+                emailId,
+                sourceJmapAccountId ?? sourceClient.getAccountId(),
+                destJmapAccountId ?? destClient.getAccountId(),
+                destMailboxId,
+              );
+              return emailId;
+            }
+            // Separate clients (cross-server multi-account): the email, its
+            // blob, and the destroy all live in the owner's JMAP account, not
+            // the source client's primary one.
             const full = await sourceClient.getEmail(emailId, sourceJmapAccountId);
             if (!full?.blobId) {
               throw new Error('Source email has no raw blob to copy');
@@ -2884,7 +2989,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       const merged: Email[] = [...refreshedEmails];
       const mergedIds = new Set(refreshedEmails.map((e: Email) => e.id));
       const insertedCount = Math.max((result.total || 0) - previousTotal, 0);
-      const appendFromIndex = Math.max(refreshedEmails.length - insertedCount, 0);
+      // Derive the cutoff from the page size, not from the refreshed list's
+      // length: when the folder shrank (a deletion - e.g. the draft of a just
+      // sent mail), the fresh page is shorter than the stale list and a
+      // length-based cutoff re-appends the deleted rows from stale local
+      // state. That ghost row is how "sent mail still shows as draft"
+      // reports happen (#592) - and re-sending the ghost delivers the mail
+      // again.
+      const appendFromIndex = Math.max(emailsPerPage - insertedCount, 0);
 
       for (const email of currentEmails.slice(appendFromIndex)) {
         if (!mergedIds.has(email.id)) {

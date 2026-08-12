@@ -122,7 +122,8 @@
     "mobile": {
       "search": "Buscar",
       "compose": "Redactar",
-      "go_back": "Volver"
+      "go_back": "Volver",
+      "toggle_menu": "Alternar menú"
     },
     "clear_search": "Limpiar búsqueda",
     "vacation_active": "Respuesta automática activa",
@@ -130,6 +131,8 @@
     "demo_reset": "Restablecer",
     "demo_tour": "Tour",
     "tags": "Etiquetas",
+    "show_all_tags": "Mostrar todo ({count})",
+    "show_fewer_tags": "Mostrar menos",
     "folders": "Carpetas",
     "mail": "Correo",
     "nav_label": "Navegación",
@@ -298,6 +301,7 @@
     "print": "Imprimir",
     "view_source": "Ver código fuente",
     "export_email": "Exportar como .eml",
+    "forward_as_attachment": "Forward as attachment",
     "import_email": "Importar .eml o .zip",
     "keyboard_shortcuts": "Atajos de teclado (?)",
     "email_source": "Código Fuente del Correo",
@@ -324,11 +328,13 @@
     "view_contact": "Ver contacto",
     "message_details": "Detalles del Mensaje",
     "more_reply_options": "Más opciones de respuesta",
-    "set_color": "Establecer etiqueta",
+    "set_tag": "Establecer etiqueta",
     "tag": "Etiqueta",
     "more_actions": "Más acciones",
     "move_to": "Mover a...",
-    "remove_color": "Eliminar etiqueta",
+    "remove_tag": "Eliminar etiqueta",
+    "tag_filter_placeholder": "Filtrar etiquetas",
+    "tag_no_matches": "No hay etiquetas coincidentes",
     "more_count": "+{count} más",
     "characters_count": "{count} caracteres",
     "quick_reply_placeholder": "Escriba una respuesta rápida...",
@@ -396,17 +402,6 @@
       "received": "Recibido",
       "message_id": "ID del Mensaje",
       "list_info": "Información de Lista"
-    },
-    "color_tag": {
-      "title": "Etiqueta de Color",
-      "red": "Rojo",
-      "orange": "Naranja",
-      "yellow": "Amarillo",
-      "green": "Verde",
-      "blue": "Azul",
-      "purple": "Morado",
-      "pink": "Rosa",
-      "none": "Ninguno"
     },
     "tooltips": {
       "reply": "Responder",
@@ -638,7 +633,6 @@
     "save_as_template": "Guardar como plantilla",
     "validation": {
       "recipient_required": "Agregue un destinatario para enviar",
-      "subject_required": "Agregue un asunto",
       "body_required": "Escriba un mensaje o adjunte un archivo",
       "attachments_uploading": "Los archivos adjuntos aún se están subiendo; se enviará en cuanto terminen",
       "attachment_upload_failed": "No enviado: no se pudo subir un adjunto. Elimínalo e inténtalo de nuevo."
@@ -656,6 +650,7 @@
     "smime_unlock_message": "Introduce la contraseña para desbloquear tu clave S/MIME.",
     "smime_unlock_button": "Desbloquear",
     "smime_passphrase_placeholder": "Contraseña S/MIME",
+    "send_timeout": "El servidor dejó de responder. Compruebe la carpeta Enviados antes de volver a enviar: el mensaje puede haber salido.",
     "continue_draft": "Continuar borrador",
     "close_draft_title": "¿Guardar o descartar borrador?",
     "close_draft_message": "Tiene cambios sin guardar. ¿Desea guardar esto como borrador o descartarlo?",
@@ -664,6 +659,13 @@
     "forgot_attachment": {
       "title": "¿Olvidaste un archivo adjunto?",
       "message": "Tu mensaje menciona \"{keyword}\" pero no hay ningún archivo adjunto. ¿Enviar de todos modos?",
+      "send_anyway": "Enviar de todos modos",
+      "back": "Volver a editar"
+    },
+    "empty_subject": {
+      "title": "¿Enviar sin asunto?",
+      "message": "Este mensaje no tiene asunto. ¿Enviarlo de todos modos?",
+      "dont_ask_again": "No volver a preguntar",
       "send_anyway": "Enviar de todos modos",
       "back": "Volver a editar"
     },
@@ -685,7 +687,40 @@
     "recipient_email_placeholder": "Dirección de correo",
     "recipient_name_placeholder": "Nombre para mostrar",
     "autocomplete_search_server": "Buscar en el servidor",
-    "autocomplete_searching": "Buscando..."
+    "autocomplete_searching": "Buscando...",
+    "toolbar": {
+      "bold": "Negrita",
+      "italic": "Cursiva",
+      "underline": "Subrayado",
+      "strikethrough": "Tachado",
+      "text_color": "Color del texto",
+      "remove_color": "Quitar color",
+      "heading_1": "Encabezado 1",
+      "heading_2": "Encabezado 2",
+      "bullet_list": "Lista con viñetas",
+      "ordered_list": "Lista numerada",
+      "quote": "Cita",
+      "code_block": "Bloque de código",
+      "align_left": "Alinear a la izquierda",
+      "align_center": "Centrar",
+      "align_right": "Alinear a la derecha",
+      "text_direction": "Dirección del texto (RTL/LTR)",
+      "link": "Enlace",
+      "table": "Tabla",
+      "clear_formatting": "Borrar formato",
+      "undo": "Deshacer",
+      "redo": "Rehacer",
+      "add_row_above": "Añadir fila encima",
+      "add_row_below": "Añadir fila debajo",
+      "add_column_before": "Añadir columna antes",
+      "add_column_after": "Añadir columna después",
+      "delete_row": "Eliminar fila",
+      "delete_column": "Eliminar columna",
+      "toggle_header_row": "Alternar fila de encabezado",
+      "delete_table": "Eliminar tabla",
+      "pick_size": "Elegir tamaño"
+    },
+    "send_filing_warning": "Enviado - pero la limpieza posterior falló, puede quedar un borrador obsoleto."
   },
   "confirm_dialog": {
     "confirm": "Confirmar",
@@ -982,7 +1017,6 @@
       "title": "Etiquetas de correo",
       "description": "Define etiquetas para organizar tus correos con colores. Se almacenan como palabras clave JMAP en el servidor.",
       "add_keyword": "Añadir etiqueta",
-      "reset_defaults": "Restablecer valores predeterminados",
       "label_field": "Nombre para mostrar",
       "label_placeholder": "ej. Trabajo, Personal, Urgente",
       "id_field": "ID de etiqueta",
@@ -995,7 +1029,34 @@
       "add": "Añadir",
       "cancel": "Cancelar",
       "migrating": "Actualizando etiqueta en correos existentes…",
-      "migration_error": "Error al actualizar la etiqueta en correos existentes"
+      "migration_error": "Error al actualizar la etiqueta en correos existentes",
+      "nesting": {
+        "label": "Etiquetas anidadas",
+        "description": "Anida etiquetas debajo de otras etiquetas y muéstralas como un árbol en la barra lateral."
+      },
+      "parent_field": "Etiqueta principal",
+      "no_parent": "Sin etiqueta principal",
+      "too_long": "Esta ruta de etiqueta es demasiado larga (máximo {max} caracteres)",
+      "has_children_locked": "Hay otras etiquetas anidadas bajo esta, por lo que su nombre y su etiqueta principal están bloqueados. Muévelas o elimínalas primero.",
+      "has_children_delete": "Elimina primero las etiquetas anidadas bajo esta",
+      "visibility_field": "Visibilidad en la barra lateral",
+      "visibility": {
+        "show": "Mostrar",
+        "unread": "Mostrar si hay no leídos",
+        "hide": "Ocultar"
+      },
+      "unrecognized": {
+        "title": "Recuperar etiquetas del servidor",
+        "description": "Los nombres y colores de las etiquetas se guardan en este navegador, pero las etiquetas en sí están en tus correos como palabras clave JMAP. Analiza tu correo en busca de palabras clave que ninguna etiqueta de aquí explique y vuelve a añadirlas.",
+        "scan": "Buscar etiquetas",
+        "rescan": "Analizar de nuevo",
+        "scanning": "Analizando… {scanned} de {total} correos",
+        "none": "Todas las etiquetas de tus correos ya están definidas aquí.",
+        "messages": "{count, plural, one {# correo} other {# correos}}",
+        "add_all": "Añadir las {count}",
+        "partial": "Solo se analizaron los {scanned} correos más recientes de {total}. Puede que falten etiquetas usadas únicamente en correos más antiguos.",
+        "error": "No se pudo analizar tu correo en busca de etiquetas."
+      }
     },
     "notifications": {
       "test_sound": "Probar sonido de notificación",
@@ -1036,6 +1097,7 @@
         "description": "Recibe notificaciones del sistema para correo nuevo cuando este sitio está cerrado. Se entrega a través del relay push de Bulwark; el relay nunca ve el contenido del correo.",
         "disable": "Desactivar",
         "enable": "Activar",
+        "dismiss_aria": "Cerrar aviso de notificaciones",
         "ios_hint": "En iOS, instala primero el sitio en la pantalla de inicio: Safari solo entrega Web Push a PWAs instaladas.",
         "reenable": "Volver a registrar",
         "relay_desc": "Usa el relay alojado de Bulwark de forma predeterminada. Cámbialo solo si te alojas tú mismo.",
@@ -1274,6 +1336,10 @@
         "add": "Add",
         "remove": "Eliminar"
       },
+      "empty_subject_warning": {
+        "label": "Aviso de asunto vacío",
+        "description": "Pedir confirmación antes de enviar un mensaje sin asunto."
+      },
       "hide_inline_image_attachments": {
         "label": "Ocultar imágenes incrustadas de los adjuntos",
         "description": "Las imágenes incrustadas en el cuerpo del mensaje no se listan como adjuntos separados"
@@ -1475,7 +1541,16 @@
         "inactive": "Deshabilitado",
         "enabled": "Cifrado en reposo habilitado",
         "disabled_success": "Cifrado en reposo deshabilitado",
-        "error": "No se pudieron actualizar las configuraciones de cifrado"
+        "error": "No se pudieron actualizar las configuraciones de cifrado",
+        "algorithm_label": "Algoritmo de cifrado",
+        "encrypt_on_append": "Cifrar los correos nuevos al subirlos",
+        "allow_spam_training": "Permitir el entrenamiento antispam antes de cifrar los correos",
+        "enable_encryption": "Habilitar el cifrado",
+        "enable_tooltip": "Habilitar el cifrado con esta clave",
+        "configure_title": "Habilitar el cifrado con esta clave",
+        "enable_button": "Habilitar",
+        "disable_tooltip": "Deshabilitar el cifrado",
+        "enabled_success": "Cifrado en reposo habilitado"
       },
       "email_client": {
         "title": "Configuración del cliente de correo",
@@ -1495,6 +1570,13 @@
         "expired": "Este código ha caducado.",
         "generating": "Generando…",
         "error": "No se pudo crear un código de vinculación. Inténtelo de nuevo."
+      },
+      "public_keys": {
+        "name_label": "Nombre de la clave pública",
+        "name_placeholder": "ej. Mi clave",
+        "key_label": "Clave pública (S/MIME o PGP en formato ASCII)",
+        "key_placeholder": "Pega aquí tu clave pública",
+        "none": "No hay claves públicas configuradas"
       }
     },
     "identities": {
@@ -2000,8 +2082,7 @@
     "delete": "Eliminar",
     "mark_as_spam": "Reportar spam",
     "not_spam": "No es spam",
-    "color_tag": "Etiqueta",
-    "remove_color": "Eliminar etiqueta",
+    "tag": "Etiqueta",
     "items_selected": "{count} correos seleccionados",
     "edit_draft": "Editar borrador",
     "cancel_scheduled_send": "Cancelar envío",
@@ -2335,6 +2416,9 @@
       "section_address_book": "Directorio",
       "select_address_book": "Seleccionar un directorio...",
       "section_identity": "Nombre e identidad",
+      "contact_type": "Tipo de contacto",
+      "type_person": "Persona",
+      "type_organization": "Organización",
       "section_work": "Trabajo y organización",
       "prefix": "Prefijo",
       "prefix_placeholder": "Dr., Sr., Sra.",
@@ -2419,7 +2503,7 @@
       "cancel": "Cancelar",
       "creating": "Creando...",
       "updating": "Actualizando...",
-      "name_required": "Se requiere al menos un nombre o apellido",
+      "name_required": "Introduce un nombre, un apellido o una organización",
       "email_invalid": "Introduce una dirección de correo válida",
       "email_error_inline": "Formato de correo inválido",
       "save_failed": "Error al guardar el contacto",
@@ -3282,5 +3366,18 @@
     "install": "Instalar",
     "dont_remind": "No volver a recordármelo",
     "dismiss_aria": "Cerrar aviso de instalación"
+  },
+  "deep_link": {
+    "message_not_found": "Este mensaje ya no está disponible.",
+    "thread_not_found": "Esta conversación ya no está disponible.",
+    "folder_not_found": "Esta carpeta ya no está disponible.",
+    "event_not_found": "Este evento ya no está disponible.",
+    "file_not_found": "Este archivo ya no está disponible.",
+    "account_unavailable": "Inicia sesión en esa cuenta para abrir este enlace.",
+    "copy_message": "Copiar enlace del mensaje",
+    "copy_conversation": "Copiar enlace de la conversación",
+    "copy_event": "Copiar enlace del evento",
+    "copied": "Enlace copiado",
+    "copy_failed": "No se pudo copiar el enlace"
   }
 }
