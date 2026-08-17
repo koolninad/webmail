@@ -84,20 +84,37 @@ class TransientAuthError extends Error {
   }
 }
 
-// True when a restore/refresh attempt failed because the server could not be
-// reached (network error) or answered 5xx (restart, maintenance, proxy
-// hiccup). Such failures must keep the account and its cookies - "stay signed
-// in" has to survive downtime and offline spells. Only a definitive rejection
-// (401/400) may evict. Mirrors the rate-limit carve-out (#104).
-function isTransientAuthError(error: unknown): boolean {
+// True when a restore/refresh attempt failed for any reason OTHER than the
+// mail server rejecting our credentials: network unreachable, 5xx (restart,
+// maintenance, proxy hiccup), or a server-side throttle/ban. Such failures
+// must keep the account and its cookies - "stay signed in" has to survive
+// downtime, offline spells, rate limits and IP bans.
+//
+// Only a definitive rejection (400/401) may evict. This used to be written as
+// an allowlist of transient statuses (`startsWith('5')`), which silently made
+// every other status definitive - so a Stalwart auto-ban, which answers 403 on
+// /.well-known/jmap for a banned client IP, destroyed the account registry
+// entry and DELETEd its session cookie. Users then had to re-add every mailbox
+// by hand after each refresh. checkAuth re-authenticates all N accounts on
+// every page load, so N accounts x a few refreshes trips Stalwart's
+// `auth.rate` limit and bans the IP, making this trivially reachable.
+// Mirrors the rate-limit carve-out (#104).
+export function isTransientAuthError(error: unknown): boolean {
   if (error instanceof TransientAuthError) return true;
+  // The JMAP API path raises this for 429; the session endpoint does not, but
+  // callers may surface it here after a request on an otherwise-live client.
+  if (error instanceof RateLimitError) return true;
   // fetch() rejects with TypeError when the network is unreachable.
   if (error instanceof TypeError) return true;
   // JMAPClient.connect()/refreshSession() embed the HTTP status in the
-  // message - a 5xx there is the server being down, not an auth failure.
+  // message. Anything that is not the server saying "these credentials are no
+  // good" is temporary: 403 (IP auto-ban), 429 (rate limited), 5xx (down).
   if (error instanceof Error) {
     const m = error.message.match(/(?:Failed to get session|Session refresh failed): (\d{3})/);
-    if (m) return m[1].startsWith('5');
+    if (m) {
+      const status = Number(m[1]);
+      return status !== 400 && status !== 401;
+    }
   }
   return false;
 }
