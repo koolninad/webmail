@@ -2,8 +2,11 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useThemeStore } from './theme-store';
 import { useLocaleStore } from './locale-store';
+import type { EmailTemplate } from '@/lib/template-types';
 import type { NotificationSoundChoice } from '@/lib/notification-sound';
 import { apiFetch } from '@/lib/browser-navigation';
+import { generateAccountId } from '@/lib/account-utils';
+import { orderForMailbox, sanitizeSortLevels, type MessageListOrderScope, type SortLevel } from '@/lib/message-list-order';
 import {
   DEFAULT_SUB_ADDRESS_DELIMITER,
   isValidSubAddressDelimiter,
@@ -25,9 +28,72 @@ let syncEnabled = false;
 let syncUsername: string | null = null;
 let syncServerUrl: string | null = null;
 let syncTimeout: ReturnType<typeof setTimeout> | null = null;
+let pendingSync: SettingsSyncJob | null = null;
 let isLoadingFromServer = false;
 
 const SYNC_DEBOUNCE_MS = 2000;
+
+interface SettingsSyncJob {
+  username: string;
+  serverUrl: string;
+  settings: Record<string, unknown>;
+}
+
+// --- Template sync bridge ---------------------------------------------------
+// Templates ride along in the synced settings blob (#825), but template-store
+// cannot be imported statically from here: it reaches this module through
+// lib/utils -> lib/debug, and the resulting import cycle leaves one side's
+// bindings uninitialized depending on which module loads first. Instead,
+// template-store registers itself here during its own module init.
+interface TemplateSyncBridge {
+  getSyncedState: () => {
+    templates: EmailTemplate[];
+    deletedTemplateIds: Record<string, string>;
+  };
+  applySyncedState: (
+    templates: unknown,
+    deletedTemplateIds: unknown,
+    opts: { merge: boolean }
+  ) => void;
+}
+
+let templateSyncBridge: TemplateSyncBridge | null = null;
+// Wired up in the window-only init block below; null during SSR.
+let onTemplateStoreChange: (() => void) | null = null;
+
+export function registerTemplateSyncBridge(
+  bridge: TemplateSyncBridge,
+  subscribe: (listener: () => void) => void
+): void {
+  templateSyncBridge = bridge;
+  subscribe(() => onTemplateStoreChange?.());
+}
+
+async function syncSettingsJob(job: SettingsSyncJob, retries = 1): Promise<void> {
+  syncLog('Syncing settings to server for', job.username);
+  const res = await apiFetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(job),
+  });
+  if (res.status === 404) {
+    syncWarn('Settings sync endpoint returned 404, disabling sync');
+    syncEnabled = false;
+  } else if (res.status === 403) {
+    syncWarn('Settings sync rejected (identity mismatch), disabling sync');
+    syncEnabled = false;
+  } else if (res.status >= 500 && retries > 0) {
+    const body = await res.json().catch(() => ({}));
+    syncWarn('Settings sync got server error:', body.error || `status ${res.status}`, '- retrying...');
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    return syncSettingsJob(job, retries - 1);
+  } else if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    syncError('Settings sync failed:', body.error || `status ${res.status}`);
+  } else {
+    syncLog('Settings synced to server successfully');
+  }
+}
 
 export type FontSize = 'small' | 'medium' | 'large';
 export type Density = 'extra-compact' | 'compact' | 'regular' | 'comfortable';
@@ -49,6 +115,8 @@ export type DateFormat = 'smart' | 'relative' | 'full';
 export type DateLocale = 'auto' | 'iso' | 'en-GB' | 'en-US';
 export type TimeFormat = '12h' | '24h';
 export type FirstDayOfWeek = 0 | 1 | 6; // 0 = Sunday, 1 = Monday, 6 = Saturday
+/** IANA zone id that overrides the browser's, or 'auto' to follow the browser (#755). */
+export type TimeZoneSetting = 'auto' | (string & {});
 export type ExternalContentPolicy = 'ask' | 'block' | 'allow';
 export type MailAttachmentAction = 'preview' | 'download';
 export type AttachmentPosition = 'beside-sender' | 'below-header';
@@ -63,6 +131,9 @@ export type MailLayout = 'split' | 'focus' | 'horizontal';
  * - 'edge'  : never add one (render edge-to-edge)
  */
 export type MessageSpacing = 'auto' | 'always' | 'edge';
+
+/** Font used to render text/plain email bodies. */
+export type PlainTextFont = 'mono' | 'sans';
 export type CalendarHoverPreview = 'off' | 'instant' | 'delay-500ms' | 'delay-1s' | 'delay-2s';
 export type SendDelaySeconds = 0 | 10 | 30 | 60;
 export type ProtocolOpenMode = 'active-session' | 'new-tab';
@@ -76,6 +147,8 @@ export type ProtocolOpenMode = 'active-session' | 'new-tab';
 const DEVICE_LOCAL_SETTING_KEYS = new Set<string>(['proInterface']);
 
 export type HoverAction = 'delete' | 'star' | 'markRead' | 'archive' | 'tag' | 'spam';
+/** Action fired by a mobile list-row swipe. 'none' disables that direction. */
+export type SwipeAction = 'none' | 'archive' | 'delete' | 'markRead' | 'star' | 'spam';
 export type HoverActionsMode = 'inline' | 'floating';
 export type HoverActionsCorner = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
 
@@ -231,12 +304,17 @@ interface SettingsState {
   fontSize: FontSize;
   density: Density;
   animationsEnabled: boolean;
+  // Message-list ordering (#718): prioritised sort levels mapped onto the JMAP
+  // Email/query sort; empty = chronological. Scope: Inbox only or every folder.
+  messageListOrder: SortLevel[];
+  messageListOrderScope: MessageListOrderScope;
 
   // Language & Region
   dateFormat: DateFormat;
   dateLocale: DateLocale;
   timeFormat: TimeFormat;
   firstDayOfWeek: FirstDayOfWeek;
+  timeZone: TimeZoneSetting;
 
   // Email Behavior
   markAsReadDelay: number; // milliseconds (0 = instant, -1 = never)
@@ -248,6 +326,7 @@ interface SettingsState {
   emailsPerPage: number;
   externalContentPolicy: ExternalContentPolicy;
   messageSpacing: MessageSpacing; // Gutter around the message body in the reader
+  plainTextFont: PlainTextFont; // Font for text/plain email bodies in the reader
   mailAttachmentAction: MailAttachmentAction;
   attachmentPosition: AttachmentPosition;
   emailAlwaysLightMode: boolean; // Always render email content in light mode
@@ -255,6 +334,8 @@ interface SettingsState {
   hoverActions: HoverAction[]; // Quick actions shown on hover in mail list
   hoverActionsMode: HoverActionsMode; // Display mode: inline (current) or floating corner
   hoverActionsCorner: HoverActionsCorner; // Corner for floating mode
+  swipeRightAction: SwipeAction; // Mobile: action when a list row is swiped right
+  swipeLeftAction: SwipeAction; // Mobile: action when a list row is swiped left
 
   // Composer
   autoSaveDraftInterval: number; // milliseconds
@@ -307,6 +388,8 @@ interface SettingsState {
   emailNotificationsEnabled: boolean;
   emailNotificationSound: boolean;
   notificationSoundChoice: NotificationSoundChoice;
+  /** Chosen Web Push relay URL. Empty = the admin-configured default. */
+  pushRelayUrl: string;
 
   // Protocol Handlers
   protocolOpenMode: ProtocolOpenMode;
@@ -418,7 +501,7 @@ interface SettingsState {
   ) => void;
   resetToDefaults: () => void;
   exportSettings: () => string;
-  importSettings: (json: string) => boolean;
+  importSettings: (json: string, opts?: { serverAccountId?: string }) => boolean;
 
   // Folder icons
   setFolderIcon: (mailboxId: string, icon: string) => void;
@@ -449,6 +532,7 @@ interface SettingsState {
 
   // Settings sync
   enableSync: (username: string, serverUrl: string) => void;
+  flushSync: () => Promise<void>;
   disableSync: () => void;
   loadFromServer: (username: string, serverUrl: string) => Promise<boolean>;
 }
@@ -458,12 +542,15 @@ const DEFAULT_SETTINGS = {
   fontSize: 'medium' as FontSize,
   density: 'regular' as Density,
   animationsEnabled: true,
+  messageListOrder: [] as SortLevel[],
+  messageListOrderScope: 'inbox' as MessageListOrderScope,
 
   // Language & Region
   dateFormat: 'smart' as DateFormat,
   dateLocale: 'auto' as DateLocale,
   timeFormat: '24h' as TimeFormat,
   firstDayOfWeek: 1 as FirstDayOfWeek, // Monday
+  timeZone: 'auto' as TimeZoneSetting,
 
   // Email Behavior
   markAsReadDelay: 0, // Instant
@@ -475,6 +562,7 @@ const DEFAULT_SETTINGS = {
   emailsPerPage: 50,
   externalContentPolicy: 'ask' as ExternalContentPolicy,
   messageSpacing: 'auto' as MessageSpacing,
+  plainTextFont: 'sans' as PlainTextFont,
   mailAttachmentAction: 'preview' as MailAttachmentAction,
   attachmentPosition: 'beside-sender' as AttachmentPosition,
   emailAlwaysLightMode: false,
@@ -482,6 +570,8 @@ const DEFAULT_SETTINGS = {
   hoverActions: ['delete', 'star', 'markRead', 'archive'] as HoverAction[],
   hoverActionsMode: 'inline' as HoverActionsMode,
   hoverActionsCorner: 'top-right' as HoverActionsCorner,
+  swipeRightAction: 'archive' as SwipeAction,
+  swipeLeftAction: 'delete' as SwipeAction,
 
   // Composer
   autoSaveDraftInterval: 60000, // 1 minute
@@ -527,6 +617,7 @@ const DEFAULT_SETTINGS = {
   emailNotificationsEnabled: true,
   emailNotificationSound: true,
   notificationSoundChoice: 'default' as NotificationSoundChoice,
+  pushRelayUrl: '',
 
   // Protocol Handlers
   protocolOpenMode: 'new-tab' as ProtocolOpenMode,
@@ -676,14 +767,18 @@ export const useSettingsStore = create<SettingsState>()(
 
       exportSettings: () => {
         const state = get();
+        const templateSync = templateSyncBridge?.getSyncedState();
         const settings = {
           fontSize: state.fontSize,
           density: state.density,
           animationsEnabled: state.animationsEnabled,
+          messageListOrder: state.messageListOrder,
+          messageListOrderScope: state.messageListOrderScope,
           dateFormat: state.dateFormat,
           dateLocale: state.dateLocale,
           timeFormat: state.timeFormat,
           firstDayOfWeek: state.firstDayOfWeek,
+          timeZone: state.timeZone,
           markAsReadDelay: state.markAsReadDelay,
           deleteAction: state.deleteAction,
           returnToListAfterAction: state.returnToListAfterAction,
@@ -692,12 +787,15 @@ export const useSettingsStore = create<SettingsState>()(
           emailsPerPage: state.emailsPerPage,
           externalContentPolicy: state.externalContentPolicy,
           messageSpacing: state.messageSpacing,
+          plainTextFont: state.plainTextFont,
           mailAttachmentAction: state.mailAttachmentAction,
           attachmentPosition: state.attachmentPosition,
           archiveMode: state.archiveMode,
           hoverActions: state.hoverActions,
           hoverActionsMode: state.hoverActionsMode,
           hoverActionsCorner: state.hoverActionsCorner,
+          swipeRightAction: state.swipeRightAction,
+          swipeLeftAction: state.swipeLeftAction,
           disableThreading: state.disableThreading,
           trustedSenders: state.trustedSenders,
           autoSaveDraftInterval: state.autoSaveDraftInterval,
@@ -716,6 +814,7 @@ export const useSettingsStore = create<SettingsState>()(
           emailNotificationsEnabled: state.emailNotificationsEnabled,
           emailNotificationSound: state.emailNotificationSound,
           notificationSoundChoice: state.notificationSoundChoice,
+          pushRelayUrl: state.pushRelayUrl,
           protocolOpenMode: state.protocolOpenMode,
           calendarNotificationsEnabled: state.calendarNotificationsEnabled,
           calendarNotificationSound: state.calendarNotificationSound,
@@ -768,11 +867,19 @@ export const useSettingsStore = create<SettingsState>()(
           // Cross-store settings
           theme: useThemeStore.getState().theme,
           locale: useLocaleStore.getState().locale,
+          // Omitted entirely (rather than emitted empty) if the bridge has
+          // not registered, so an importing device leaves its templates alone.
+          ...(templateSync
+            ? {
+                templates: templateSync.templates,
+                deletedTemplateIds: templateSync.deletedTemplateIds,
+              }
+            : {}),
         };
         return JSON.stringify(settings, null, 2);
       },
 
-      importSettings: (json: string) => {
+      importSettings: (json: string, opts?: { serverAccountId?: string }) => {
         try {
           const settings = JSON.parse(json);
 
@@ -795,6 +902,12 @@ export const useSettingsStore = create<SettingsState>()(
                 set({ sendDelaySeconds: 0 });
                 return;
               }
+              // Validity of the zone id itself is checked at use time
+              // (lib/timezone resolveTimeZone falls back to the browser zone),
+              // so only reject non-strings here.
+              if (key === 'timeZone' && typeof settings[key] !== 'string') {
+                return;
+              }
               // Ignore a legacy global allMailFolderIds (string[] | null) or any
               // non-record value - this build keys it per account.
               if (key === 'allMailFolderIds' && !isPlainRecord(settings[key])) {
@@ -805,7 +918,35 @@ export const useSettingsStore = create<SettingsState>()(
               if (key === 'preferredIdentityIds' && !isPlainRecord(settings[key])) {
                 return;
               }
+              // The list order is sent to the server as a sort array, so an
+              // unknown criterion from a newer/older client must never get
+              // through (an unsupportedSort refusal empties the folder).
+              if (key === 'messageListOrder') {
+                set({ messageListOrder: sanitizeSortLevels(settings[key]) });
+                return;
+              }
+              if (key === 'messageListOrderScope' && settings[key] !== 'inbox' && settings[key] !== 'all') {
+                return;
+              }
               if (DEVICE_LOCAL_SETTING_KEYS.has(key)) {
+                return;
+              }
+              // Per-account maps (accountId -> value) live in every account's
+              // synced settings blob, so a per-account server load must NOT
+              // replace the whole map - each account's server is authoritative
+              // only for its OWN entry. Merging preserves the other accounts'
+              // local values; without this the last account to load clobbers
+              // the map and the composer picks another account's default sender
+              // (login-order dependent). File imports (no serverAccountId)
+              // still replace wholesale.
+              if (opts?.serverAccountId && (key === 'preferredIdentityIds' || key === 'allMailFolderIds')) {
+                const existing = (get() as unknown as Record<string, unknown>)[key];
+                const merged: Record<string, unknown> = isPlainRecord(existing) ? { ...existing } : {};
+                const incoming = settings[key] as Record<string, unknown>;
+                if (Object.prototype.hasOwnProperty.call(incoming, opts.serverAccountId)) {
+                  merged[opts.serverAccountId] = incoming[opts.serverAccountId];
+                }
+                set({ [key]: merged });
                 return;
               }
               set({ [key]: settings[key] });
@@ -824,6 +965,17 @@ export const useSettingsStore = create<SettingsState>()(
           if (settings.locale) {
             useLocaleStore.getState().setLocale(settings.locale);
           }
+          // Templates live in their own store but ride along in the synced
+          // settings blob (#825). Server loads merge, because every account's
+          // blob carries the full (account-agnostic) template list and a stale
+          // blob must not clobber it; file imports replace wholesale like the
+          // rest of the settings. Blobs from builds that predate template sync
+          // have no `templates` key and leave the local store untouched.
+          templateSyncBridge?.applySyncedState(
+            settings.templates,
+            settings.deletedTemplateIds,
+            { merge: Boolean(opts?.serverAccountId) }
+          );
 
           return true;
         } catch (error) {
@@ -948,6 +1100,16 @@ export const useSettingsStore = create<SettingsState>()(
         syncLog('Settings sync enabled for', username);
       },
 
+      flushSync: async () => {
+        if (syncTimeout) {
+          clearTimeout(syncTimeout);
+          syncTimeout = null;
+        }
+        const job = pendingSync;
+        pendingSync = null;
+        if (job) await syncSettingsJob(job);
+      },
+
       disableSync: () => {
         syncEnabled = false;
         syncUsername = null;
@@ -956,6 +1118,7 @@ export const useSettingsStore = create<SettingsState>()(
           clearTimeout(syncTimeout);
           syncTimeout = null;
         }
+        pendingSync = null;
         syncLog('Settings sync disabled');
       },
 
@@ -980,7 +1143,11 @@ export const useSettingsStore = create<SettingsState>()(
           }
           if (settings && typeof settings === 'object') {
             isLoadingFromServer = true;
-            get().importSettings(JSON.stringify(settings));
+            // Merge (not replace) per-account maps for the account being loaded,
+            // so multi-account logins don't clobber each other by login order.
+            get().importSettings(JSON.stringify(settings), {
+              serverAccountId: generateAccountId(username, serverUrl),
+            });
             isLoadingFromServer = false;
             syncLog('Settings loaded from server successfully');
             // The per-account preferred sender identity (#507) is re-applied by
@@ -1012,6 +1179,10 @@ export const useSettingsStore = create<SettingsState>()(
             }
             if (!isPlainRecord(state.preferredIdentityIds)) {
               state.preferredIdentityIds = {};
+            }
+            state.messageListOrder = sanitizeSortLevels(state.messageListOrder);
+            if (state.messageListOrderScope !== 'inbox' && state.messageListOrderScope !== 'all') {
+              state.messageListOrderScope = 'inbox';
             }
             applyFontSize(state.fontSize);
             applyDensity(state.density);
@@ -1166,44 +1337,21 @@ if (typeof window !== 'undefined') {
   applyDensity(store.density);
   applyAnimations(store.animationsEnabled);
 
-  // Shared sync function used by all store subscribers
-  const syncToServer = async (retries = 1): Promise<void> => {
-    const settings = JSON.parse(useSettingsStore.getState().exportSettings());
-    syncLog('Syncing settings to server...');
-    const res = await apiFetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: syncUsername, serverUrl: syncServerUrl, settings }),
-    });
-    if (res.status === 404) {
-      syncWarn('Settings sync endpoint returned 404, disabling sync');
-      syncEnabled = false;
-    } else if (res.status === 403) {
-      // Identity mismatch - current session cookies don't match the
-      // username/serverUrl we're syncing for (common in dev mock mode where
-      // no stalwart-context cookie is written, or when rememberMe is off).
-      // Retrying won't help for this session; disable to stop the noise.
-      syncWarn('Settings sync rejected (identity mismatch), disabling sync');
-      syncEnabled = false;
-    } else if (res.status >= 500 && retries > 0) {
-      const body = await res.json().catch(() => ({}));
-      syncWarn('Settings sync got server error:', body.error || `status ${res.status}`, '- retrying...');
-      await new Promise((r) => setTimeout(r, 2000));
-      return syncToServer(retries - 1);
-    } else if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      syncError('Settings sync failed:', body.error || `status ${res.status}`);
-    } else {
-      syncLog('Settings synced to server successfully');
-    }
-  };
-
   const triggerSync = () => {
     if (!syncEnabled || !syncUsername || !syncServerUrl || isLoadingFromServer) return;
+    pendingSync = {
+      username: syncUsername,
+      serverUrl: syncServerUrl,
+      settings: JSON.parse(useSettingsStore.getState().exportSettings()),
+    };
     if (syncTimeout) clearTimeout(syncTimeout);
     syncTimeout = setTimeout(async () => {
+      syncTimeout = null;
+      const job = pendingSync;
+      pendingSync = null;
+      if (!job) return;
       try {
-        await syncToServer();
+        await syncSettingsJob(job);
       } catch (error) {
         syncError('Settings sync error:', error);
       }
@@ -1224,4 +1372,28 @@ if (typeof window !== 'undefined') {
   // Also sync when theme or locale changes
   useThemeStore.subscribe(triggerSync);
   useLocaleStore.subscribe(triggerSync);
+
+  // And when templates change (they ride along in the synced blob, #825).
+  // Unlike theme/locale this honors the user's sync opt-out toggle. The
+  // subscription itself is made by template-store when it registers the
+  // template sync bridge (see registerTemplateSyncBridge).
+  onTemplateStoreChange = () => {
+    if (useSettingsStore.getState().settingsSyncDisabled) return;
+    triggerSync();
+  };
+  // Ensure template-store is loaded (and the bridge registered) even before
+  // any UI component imports it, so the first sync push already carries the
+  // templates.
+  void import('./template-store');
+}
+
+/**
+ * The message-list order to request for a folder with the given role (#718):
+ * the configured levels when they apply to every folder or this is the Inbox,
+ * chronological otherwise. Pass null for views without a folder role (tag
+ * views, search) - those only pick the order up under the "all folders" scope.
+ */
+export function getMessageListOrderFor(role: string | null | undefined): SortLevel[] {
+  const { messageListOrder, messageListOrderScope } = useSettingsStore.getState();
+  return orderForMailbox(messageListOrder, messageListOrderScope, role);
 }

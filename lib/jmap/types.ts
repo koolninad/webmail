@@ -85,6 +85,12 @@ export interface Email {
   scheduledIdentityId?: string;
   scheduledUndoStatus?: 'pending' | 'final' | 'canceled';
   scheduledDeliveryStatus?: Record<string, DeliveryStatus>;
+  /**
+   * JMAP account that owns the EmailSubmission. Set when the scheduled send
+   * lives in a shared/group account rather than the primary submission
+   * account, so cancel/reschedule can be routed back to it.
+   */
+  scheduledAccountId?: string;
   isScheduled?: boolean;
   isSmimeScheduled?: boolean;
 }
@@ -95,6 +101,13 @@ export interface SendEmailResult {
   emailSubmissionId?: string;
   sendAt?: string;
   isSmime?: boolean;
+  /**
+   * JMAP account the EmailSubmission was created in. Differs from the primary
+   * submission account when sending from a shared/group identity, and lets a
+   * later undo / send-now / cancel address the right account without having to
+   * search for it.
+   */
+  submissionAccountId?: string;
   /**
    * Set when the submission succeeded but a post-send step was rejected
    * (the implicit onSuccessUpdateEmail filing patch, or destroying the
@@ -109,6 +122,7 @@ export interface ScheduledEmail extends Email {
   scheduledIdentityId: string;
   scheduledUndoStatus: 'pending' | 'final' | 'canceled';
   scheduledDeliveryStatus?: Record<string, DeliveryStatus>;
+  scheduledAccountId?: string;
   isScheduled: true;
   isSmimeScheduled: boolean;
 }
@@ -546,6 +560,23 @@ export interface Calendar {
   // shared calendar (see lib/shared-calendar-colors). When true, the override
   // wins over per-event colors so the whole shared calendar paints uniformly.
   colorIsLocalOverride?: boolean;
+  // True when the calendar holds only tasks (VTODO) and no events, so it is
+  // hidden from the event calendar UI while remaining available to the tasks
+  // view (#761). Undefined means "not determined" (treated as not tasks-only).
+  isTasksOnly?: boolean;
+}
+
+/**
+ * iCalendar component types a calendar advertises through the CalDAV
+ * supported-calendar-component-set. Sync clients such as DAVx5 use it to
+ * decide whether a collection is offered to calendar apps, todo apps, or both
+ * (#760). Only settable while the collection is created.
+ */
+export type CalendarComponentType = 'VEVENT' | 'VTODO';
+
+export interface CreateCalendarOptions {
+  /** Component set for the new calendar; defaults to events only (VEVENT). */
+  components?: CalendarComponentType[];
 }
 
 export interface CalendarRights {

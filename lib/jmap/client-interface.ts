@@ -1,5 +1,35 @@
-import type { Email, Mailbox, StateChange, AccountStates, Thread, Identity, EmailAddress, ContactCard, AddressBook, AddressBookRights, VacationResponse, Calendar, CalendarRights, CalendarEvent, CalendarEventFilter, CalendarTask, FileNode, FileNodeRights, Principal, PushSubscription, ScheduledEmail, SendEmailResult, SharedAccount } from "./types";
+import type { Email, Mailbox, StateChange, AccountStates, Thread, Identity, EmailAddress, ContactCard, AddressBook, AddressBookRights, VacationResponse, Calendar, CreateCalendarOptions, CalendarRights, CalendarEvent, CalendarEventFilter, CalendarTask, FileNode, FileNodeRights, Principal, PushSubscription, ScheduledEmail, SendEmailResult, SharedAccount } from "./types";
 import type { SieveScript, SieveCapabilities } from "./sieve-types";
+import type { SortLevel } from "@/lib/message-list-order";
+
+/** What `migrateKeyword` managed to do. */
+export interface KeywordMigration {
+  /** Messages now carrying the new keyword. */
+  migrated: number;
+  /**
+   * Messages the server refused to update for a reason other than being gone.
+   * Those still carry the old keyword.
+   */
+  refused: number;
+}
+
+export interface KeywordInfo {
+  id: string;
+  name: string;
+  color: string | null;
+  total: number;
+  unread: number;
+  isProviderLabel: boolean;
+  source: 'provider' | 'message';
+}
+
+export interface KeywordDiscoveryResult {
+  keywords: Record<string, number>;
+  labels: KeywordInfo[];
+  scanned: number;
+  total: number;
+  complete: boolean;
+}
 
 /**
  * Interface defining the public JMAP client contract.
@@ -75,19 +105,38 @@ export interface IJMAPClient {
   getMailboxes(accountId?: string): Promise<Mailbox[]>;
   getAllMailboxes(): Promise<Mailbox[]>;
   createMailbox(name: string, parentId?: string, accountId?: string): Promise<Mailbox>;
-  updateMailbox(mailboxId: string, changes: { name?: string; parentId?: string | null; role?: string | null; sortOrder?: number }): Promise<void>;
-  deleteMailbox(mailboxId: string): Promise<void>;
+  updateMailbox(mailboxId: string, changes: { name?: string; parentId?: string | null; role?: string | null; sortOrder?: number }, accountId?: string): Promise<void>;
+  deleteMailbox(mailboxId: string, accountId?: string): Promise<void>;
 
   // ── Emails ────────────────────────────────────────────────────
   // `pinnedFirst` sorts emails carrying the $pinned keyword to the top
   // (server-side hasKeyword sort comparator, RFC 8621), then receivedAt desc.
   // `extraFilter` is an arbitrary JMAP FilterCondition/FilterOperator ANDed
   // into the view - used by the message-list category tabs (search-based).
-  getEmails(mailboxId?: string, accountId?: string, limit?: number, position?: number, hasKeyword?: string, pinnedFirst?: boolean, extraFilter?: Record<string, unknown>): Promise<{ emails: Email[]; hasMore: boolean; total: number }>;
+  // `order` is the user's configured message-list order (#718), applied
+  // server-side after pinned-first; see lib/message-list-order.ts.
+  getEmails(mailboxId?: string, accountId?: string, limit?: number, position?: number, hasKeyword?: string, pinnedFirst?: boolean, extraFilter?: Record<string, unknown>, order?: SortLevel[]): Promise<{ emails: Email[]; hasMore: boolean; total: number }>;
+  /**
+   * Sort properties the account's server advertises for Email/query
+   * (`emailQuerySortOptions` in the mail capability, RFC 8621 §1.3), or null
+   * when the server does not say. Used to grey out keyword-based ordering
+   * criteria the server cannot honour.
+   */
+  getEmailQuerySortOptions?(accountId?: string): string[] | null;
   getEmailsInMailbox(mailboxId: string): Promise<Email[]>;
   getEmail(emailId: string, accountId?: string): Promise<Email | null>;
   getSomeEmails(emailsId: string[], accountId?: string): Promise<Email[]>
   getTagCounts(tagIds: string[]): Promise<Record<string, { total: number; unread: number }>>;
+  /**
+   * Enumerate account keywords for extensions. Servers supporting Keyword/get
+   * can return exact counts and provider-label metadata; other servers use the
+   * bounded scan.
+   */
+  getKeywords(options?: {
+    limit?: number;
+    onProgress?: (scanned: number, total: number) => void;
+    signal?: AbortSignal;
+  }): Promise<KeywordDiscoveryResult>;
   /**
    * Every keyword currently set on the account's messages and how many of the
    * walked messages carry it, found by walking the message list - JMAP offers no
@@ -125,7 +174,13 @@ export interface IJMAPClient {
   removeKeyword(emailId: string, keyword: string, accountId?: string): Promise<void>;
   /** Apply one `keywords/<name>` patch fragment (true=add, null=remove) to many messages in a single Email/set. */
   batchUpdateKeywords(emailIds: string[], patch: Record<string, boolean | null>, accountId?: string): Promise<void>;
-  migrateKeyword(oldKeyword: string, newKeyword: string): Promise<number>;
+  /**
+   * Rewrite one keyword to another on every message that carries it, in
+   * batches. Fails outright only when the server refuses the whole call;
+   * per-message refusals are reported in the result, since the messages
+   * migrated alongside them stay migrated.
+   */
+  migrateKeyword(oldKeyword: string, newKeyword: string): Promise<KeywordMigration>;
   deleteEmail(emailId: string, accountId?: string): Promise<void>;
   moveToTrash(emailId: string, trashMailboxId: string, accountId?: string, markAsRead?: boolean): Promise<void>;
   batchDeleteEmails(emailIds: string[], accountId?: string): Promise<void>;
@@ -206,9 +261,9 @@ export interface IJMAPClient {
 
   sendRawEmail(blob: Blob, identityId: string, sentMailboxId: string, draftMailboxId?: string, delayedUntil?: string, envelopeRecipients?: string[]): Promise<SendEmailResult>;
   submitRawEmail(blob: Blob, identityId: string, delayedUntil?: string, envelopeRecipients?: string[]): Promise<SendEmailResult>;
-  getScheduledEmails(limit?: number, position?: number): Promise<{ emails: ScheduledEmail[]; hasMore: boolean; total: number; nextPosition: number }>;
-  cancelEmailSubmission(submissionId: string): Promise<void>;
-  rescheduleEmailSubmission(submissionId: string, emailId: string, identityId: string, delayedUntil: string): Promise<SendEmailResult>;
+  getScheduledEmails(limit?: number, position?: number): Promise<{ emails: ScheduledEmail[]; hasMore: boolean; total: number; totalByAccount?: Record<string, number>; nextPosition: number }>;
+  cancelEmailSubmission(submissionId: string, accountId?: string): Promise<void>;
+  rescheduleEmailSubmission(submissionId: string, emailId: string, identityId: string, delayedUntil: string, accountId?: string): Promise<SendEmailResult>;
   /** `sentMailboxId` is accepted for backwards compatibility but ignored: the message is placed in Drafts only. */
   restoreEmailToDraft(emailId: string, draftMailboxId: string, sentMailboxId?: string): Promise<void>;
 
@@ -245,7 +300,7 @@ export interface IJMAPClient {
   getBlobDownloadUrl(blobId: string, name?: string, type?: string, accountId?: string): string;
   fetchBlob(blobId: string, name?: string, type?: string, accountId?: string): Promise<Blob>;
   fetchBlobAsObjectUrl(blobId: string, name?: string, type?: string, accountId?: string): Promise<string>;
-  fetchBlobArrayBuffer(blobId: string, name?: string, type?: string, accountId?: string): Promise<ArrayBuffer>;
+  fetchBlobArrayBuffer(blobId: string, name?: string, type?: string, accountId?: string, rangeHeader?: number): Promise<ArrayBuffer>;
   downloadBlob(blobId: string, name?: string, type?: string, accountId?: string): Promise<void>;
 
   // ── Identities ────────────────────────────────────────────────
@@ -293,7 +348,7 @@ export interface IJMAPClient {
   getCalendarsAccountId(): string;
   getCalendars(): Promise<Calendar[]>;
   getAllCalendars(): Promise<Calendar[]>;
-  createCalendar(calendar: Partial<Calendar>, targetAccountId?: string): Promise<Calendar>;
+  createCalendar(calendar: Partial<Calendar>, targetAccountId?: string, options?: CreateCalendarOptions): Promise<Calendar>;
   updateCalendar(calendarId: string, updates: Partial<Calendar>, targetAccountId?: string): Promise<void>;
   setDefaultCalendar(calendarId: string, targetAccountId?: string): Promise<void>;
   deleteCalendar(calendarId: string, targetAccountId?: string): Promise<void>;

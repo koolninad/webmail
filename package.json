@@ -1,6 +1,6 @@
 {
   "name": "bulwark-webmail",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "description": "Bulwark Webmail - a modern webmail client built for Stalwart Mail Server",
   "author": "Bulwark Webmail <bulwark@rbm.systems>",
   "license": "AGPL-3.0-only",
@@ -30,7 +30,7 @@
     "test:translations": "vitest run --no-isolate lib/__tests__/translations.test.ts",
     "test:integration": "bash integration/run-tests.sh",
     "prepare": "husky",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

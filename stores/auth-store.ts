@@ -9,7 +9,8 @@ import { useVacationStore } from './vacation-store';
 import { useCalendarStore } from './calendar-store';
 import { useFilterStore } from './filter-store';
 import { useSettingsStore } from './settings-store';
-import { useAccountStore } from './account-store';
+import { useAccountStore, type AccountEntry } from './account-store';
+import { fetchPrincipalDisplayName } from '@/lib/stalwart/principal';
 import { fetchConfig } from '@/hooks/use-config';
 import { debug } from '@/lib/debug';
 import { generateAccountId } from '@/lib/account-utils';
@@ -37,12 +38,25 @@ interface AuthState {
   connectionLost: boolean;
   activeAccountId: string | null;
   isDemoMode: boolean;
+  /**
+   * Bumped when background account restoration finishes connecting clients
+   * after the UI already unblocked, so effects that bind per-client handlers
+   * (push notifications) re-run over the now-complete client set.
+   */
+  connectedAccountsRevision: number;
 
   login: (serverUrl: string, username: string, password: string, totp?: string, rememberMe?: boolean) => Promise<boolean>;
   loginWithOAuth: (serverUrl: string, code: string, codeVerifier: string, redirectUri: string, serverId?: string) => Promise<boolean>;
   loginWithServerSso: (code: string, state: string) => Promise<boolean>;
   loginDemo: () => Promise<boolean>;
-  refreshAccessToken: () => Promise<string | null>;
+  /**
+   * Obtain a usable access token for the active account.
+   *
+   * Renews against the IdP by default. `allowCached` lets a session restore
+   * reuse the token the server still holds for this slot - IdPs that gate
+   * refresh tokens behind an `nbf` claim reject an early renewal outright.
+   */
+  refreshAccessToken: (options?: { allowCached?: boolean }) => Promise<string | null>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   removeAccount: (accountId: string) => void;
@@ -133,6 +147,43 @@ function getClientRateLimitState(client: IJMAPClient | null): Pick<AuthState, 'i
     isRateLimited: true,
     rateLimitUntil: Date.now() + remainingMs,
   };
+}
+
+/**
+ * Refresh the account registry's cached `displayName` from the server (#900).
+ *
+ * The name is captured once by `addAccount` (a no-op for an existing entry),
+ * so without this an account keeps whatever name it had at first login
+ * forever. On Stalwart the identity name itself is a one-time snapshot of the
+ * principal "Full name", so the live value has to come from the principal;
+ * elsewhere the primary identity name is the best available source.
+ *
+ * Best-effort and never throws: a failed lookup keeps the cached name.
+ */
+export async function syncAccountDisplayName(
+  accountId: string,
+  client: IJMAPClient,
+  fallbackName?: string | null,
+): Promise<void> {
+  const account = useAccountStore.getState().getAccountById(accountId);
+  if (!account) return;
+
+  const name = (await fetchPrincipalDisplayName(client, account.cookieSlot))
+    || fallbackName?.trim()
+    || '';
+  if (!name) return;
+
+  // Re-read: the entry may have changed (or been removed) during the request.
+  const current = useAccountStore.getState().getAccountById(accountId);
+  if (!current || current.displayName === name) return;
+
+  const updates: Partial<AccountEntry> = { displayName: name };
+  // `label` is seeded from the same value and never edited separately, so
+  // keep it in step unless it has diverged for some other reason.
+  if (!current.label || current.label === current.displayName) {
+    updates.label = name;
+  }
+  useAccountStore.getState().updateAccount(accountId, updates);
 }
 
 async function syncStalwartAuthContext(
@@ -595,6 +646,7 @@ export const useAuthStore = create<AuthState>()(
       connectionLost: false,
       activeAccountId: null,
       isDemoMode: false,
+      connectedAccountsRevision: 0,
 
       login: async (serverUrl, username, password, totp, rememberMe) => {
         set({ isLoading: true, error: null, isRateLimited: false, rateLimitUntil: null });
@@ -725,6 +777,7 @@ export const useAuthStore = create<AuthState>()(
             isDefault: accountStore.accounts.length === 0,
           });
           accountStore.setActiveAccount(accountId);
+          void syncAccountDisplayName(accountId, client, primaryIdentity?.name);
 
           // Update account entry in case it already existed (addAccount is a no-op for existing accounts)
           accountStore.updateAccount(accountId, {
@@ -951,6 +1004,7 @@ export const useAuthStore = create<AuthState>()(
           accountStore.setActiveAccount(accountId);
 
           await syncStalwartAuthContext(serverUrl, username, client.getAuthHeader(), slot);
+          void syncAccountDisplayName(accountId, client, primaryIdentity?.name);
 
           set({
             isAuthenticated: true,
@@ -1090,6 +1144,7 @@ export const useAuthStore = create<AuthState>()(
           accountStore.setActiveAccount(accountId);
 
           await syncStalwartAuthContext(ssoServerUrl, username, client.getAuthHeader(), slot);
+          void syncAccountDisplayName(accountId, client, primaryIdentity?.name);
 
           set({
             isAuthenticated: true,
@@ -1143,7 +1198,7 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      refreshAccessToken: async () => {
+      refreshAccessToken: async (options) => {
         if (refreshPromise) return refreshPromise;
 
         const accountId = get().activeAccountId;
@@ -1156,7 +1211,12 @@ export const useAuthStore = create<AuthState>()(
 
         const promise = (async () => {
           try {
-            const res = await apiFetch(`/api/auth/token?slot=${slot}`, { method: 'PUT' });
+            // Default to forcing a genuine refresh: the usual caller was told
+            // the current token is unusable (rejected by JMAP, or due for
+            // scheduled renewal), so the server-side cache must be skipped.
+            // Session restore passes allowCached to reuse a still-valid token.
+            const force = options?.allowCached ? '' : '&force=true';
+            const res = await apiFetch(`/api/auth/token?slot=${slot}${force}`, { method: 'PUT' });
 
             if (!res.ok) {
               // Only a definitive 401 ends the session. Anything else (5xx
@@ -1253,6 +1313,7 @@ export const useAuthStore = create<AuthState>()(
           accountStore.removeAccount(accountId);
         }
 
+        await useSettingsStore.getState().flushSync();
         useSettingsStore.getState().disableSync();
 
         await authHooks.onAfterLogout.emit({
@@ -1423,6 +1484,7 @@ export const useAuthStore = create<AuthState>()(
             snapshotAccount(state.activeAccountId);
           }
           clearAllStores();
+          await useSettingsStore.getState().flushSync();
           useSettingsStore.getState().disableSync();
 
           // Client not connected - try to restore
@@ -1563,6 +1625,7 @@ export const useAuthStore = create<AuthState>()(
             snapshotAccount(state.activeAccountId);
           }
           clearAllStores();
+          await useSettingsStore.getState().flushSync();
           useSettingsStore.getState().disableSync();
         }
 
@@ -1601,6 +1664,7 @@ export const useAuthStore = create<AuthState>()(
             debug.error(`Failed to load data for ${accountId}:`, err);
           }
         }
+        void syncAccountDisplayName(accountId, targetClient, get().primaryIdentity?.name);
 
         // Sync settings
         fetchConfig().then(config => {
@@ -1674,9 +1738,12 @@ export const useAuthStore = create<AuthState>()(
           const activeId = get().activeAccountId;
           const targetId = activeId || defaultAccount?.id || accounts[0].id;
 
-          // Try to connect all accounts
-          for (const account of accounts) {
-            if (clients.has(account.id)) continue; // Already connected
+          // Restore one account: decrypt the stored credential/token, connect,
+          // and sync the passthrough auth context. The context write never
+          // throws and doesn't depend on the connect result, so its round trip
+          // overlaps the connect instead of running after it.
+          const restoreAccount = async (account: (typeof accounts)[number]) => {
+            if (clients.has(account.id)) return; // Already connected
 
             // Basic auth without rememberMe leaves nothing to restore - the
             // user logged in without persisting credentials. Evict silently
@@ -1684,7 +1751,7 @@ export const useAuthStore = create<AuthState>()(
             if (account.authMode === 'basic' && !account.rememberMe) {
               evictAccount(account.id);
               accountStore.removeAccount(account.id);
-              continue;
+              return;
             }
 
             try {
@@ -1695,11 +1762,13 @@ export const useAuthStore = create<AuthState>()(
                   const refreshFn = get().refreshAccessToken;
                   const client = JMAPClient.withBearer(account.serverUrl, access_token, account.username, () => refreshFn());
                   bindClientStatusHandlers(client, set, get, account.id);
+                  const contextSync = syncStalwartAuthContext(account.serverUrl, account.username, client.getAuthHeader(), account.cookieSlot);
                   await client.connect();
                   clients.set(account.id, client);
                   scheduleRefresh(expires_in, get().refreshAccessToken, account.id);
-                  await syncStalwartAuthContext(account.serverUrl, account.username, client.getAuthHeader(), account.cookieSlot);
+                  await contextSync;
                   accountStore.updateAccount(account.id, { isConnected: true, hasError: false });
+                  void syncAccountDisplayName(account.id, client);
                 } else if (res.status >= 500) {
                   throw new TransientAuthError('Token refresh failed', res.status);
                 } else {
@@ -1711,10 +1780,12 @@ export const useAuthStore = create<AuthState>()(
                   const { serverUrl, username, password } = await res.json();
                   const client = new JMAPClient(serverUrl, username, password);
                   bindClientStatusHandlers(client, set, get, account.id);
+                  const contextSync = syncStalwartAuthContext(serverUrl, username, client.getAuthHeader(), account.cookieSlot);
                   await client.connect();
                   clients.set(account.id, client);
-                  await syncStalwartAuthContext(serverUrl, username, client.getAuthHeader(), account.cookieSlot);
+                  await contextSync;
                   accountStore.updateAccount(account.id, { isConnected: true, hasError: false });
+                  void syncAccountDisplayName(account.id, client);
                 } else if (res.status >= 500) {
                   throw new TransientAuthError('Session restore failed', res.status);
                 } else {
@@ -1729,7 +1800,7 @@ export const useAuthStore = create<AuthState>()(
                   hasError: true,
                   errorMessage: 'Temporarily rate limited by server',
                 });
-                continue;
+                return;
               }
               // Outage or offline - keep the account (and its cookies) so the
               // session resumes once the server is reachable again. Same
@@ -1741,7 +1812,7 @@ export const useAuthStore = create<AuthState>()(
                   hasError: true,
                   errorMessage: 'Server unreachable',
                 });
-                continue;
+                return;
               }
               // Remove unrestorable accounts so the user is prompted to log in
               // again rather than seeing a stale error entry forever.
@@ -1749,6 +1820,32 @@ export const useAuthStore = create<AuthState>()(
               accountStore.removeAccount(account.id);
               apiFetch(`/api/auth/session?slot=${account.cookieSlot}`, { method: 'DELETE' }).catch(() => {});
             }
+          };
+
+          // Restore the account the UI will show first, so time-to-inbox pays
+          // for one account's round trips, not every registered account's. The
+          // rest connect in the background once the target is up; the revision
+          // bump re-runs per-client effects (push binding) over the full set.
+          const targetEntry = accounts.find((account) => account.id === targetId);
+          const otherAccounts = accounts.filter((account) => account.id !== targetId);
+          if (targetEntry) await restoreAccount(targetEntry);
+
+          const restoreRemaining = async () => {
+            for (const account of otherAccounts) {
+              await restoreAccount(account);
+            }
+          };
+
+          if (clients.has(targetId)) {
+            if (otherAccounts.length > 0) {
+              void restoreRemaining().then(() => {
+                set((state) => ({ connectedAccountsRevision: state.connectedAccountsRevision + 1 }));
+              });
+            }
+          } else {
+            // Target didn't restore - the fallback below needs the other
+            // accounts connected before it can pick one, so wait for them.
+            await restoreRemaining();
           }
 
           // Activate the target account
@@ -1756,8 +1853,17 @@ export const useAuthStore = create<AuthState>()(
           const targetAccount = accountStore.getAccountById(targetId);
           if (targetClient && targetAccount) {
             accountStore.setActiveAccount(targetId);
-            const { identities, primaryIdentity } = loadIdentities(await targetClient.getIdentities(), targetAccount.username);
             initializeFeatureStores(targetClient);
+
+            // Identities only feed the composer's From picker and the settings
+            // pages - not the mail list. Load them in the background instead of
+            // spending a serial round trip before the UI unblocks.
+            const identitiesLoaded = targetClient.getIdentities()
+              .then((raw) => {
+                const { identities, primaryIdentity } = loadIdentities(raw, targetAccount.username);
+                set({ identities, primaryIdentity });
+              })
+              .catch((err) => debug.error('Failed to load identities during restore:', err));
 
             set({
               isAuthenticated: true,
@@ -1766,8 +1872,6 @@ export const useAuthStore = create<AuthState>()(
               username: targetAccount.username,
               client: targetClient,
               ...getClientRateLimitState(targetClient),
-              identities,
-              primaryIdentity,
               authMode: targetAccount.authMode,
               rememberMe: targetAccount.rememberMe,
               connectionLost: false,
@@ -1779,7 +1883,9 @@ export const useAuthStore = create<AuthState>()(
               if (!config.settingsSyncEnabled) return;
               useSettingsStore.getState().loadFromServer(targetAccount.username, targetAccount.serverUrl).finally(() => {
                 useSettingsStore.getState().enableSync(targetAccount.username, targetAccount.serverUrl);
-                applyPreferredIdentity(targetAccount.id);
+                // The preferred identity can only be applied once identities
+                // are known; both loads run concurrently, so join here.
+                identitiesLoaded.then(() => applyPreferredIdentity(targetAccount.id));
               });
             }).catch(() => {});
             return;
@@ -1849,7 +1955,9 @@ export const useAuthStore = create<AuthState>()(
           if (state.authMode === 'oauth' && state.serverUrl) {
             set({ isLoading: true, isRateLimited: false, rateLimitUntil: null });
             try {
-              const token = await get().refreshAccessToken();
+              // Restore, not renewal - let the server hand back the cached
+              // token if it is still valid rather than spending a refresh.
+              const token = await get().refreshAccessToken({ allowCached: true });
               if (token && state.serverUrl) {
                 const refreshFn = get().refreshAccessToken;
                 const client = JMAPClient.withBearer(state.serverUrl, token, state.username || '', () => refreshFn());
@@ -1877,6 +1985,7 @@ export const useAuthStore = create<AuthState>()(
 
                 const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), state.username || '');
                 initializeFeatureStores(client);
+                void syncAccountDisplayName(accountId, client, primaryIdentity?.name);
 
                 set({
                   isAuthenticated: true,
@@ -1947,6 +2056,7 @@ export const useAuthStore = create<AuthState>()(
 
                 const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), username);
                 initializeFeatureStores(client);
+                void syncAccountDisplayName(accountId, client, primaryIdentity?.name);
 
                 set({
                   isAuthenticated: true,
@@ -2007,6 +2117,11 @@ export const useAuthStore = create<AuthState>()(
         const identities = identityState.identities;
         const primaryIdentity = identities[0] ?? null;
         set({ identities, primaryIdentity });
+
+        const { activeAccountId, client } = get();
+        if (activeAccountId && client) {
+          void syncAccountDisplayName(activeAccountId, client, primaryIdentity?.name);
+        }
       },
 
       refreshIdentities: async () => {

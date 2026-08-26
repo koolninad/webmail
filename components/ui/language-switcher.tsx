@@ -32,6 +32,7 @@ const languages = [
   { value: 'uk', label: 'Українська' },
   { value: 'ko', label: '한국어' },
   { value: 'ja', label: '日本語' },
+  { value: 'mn', label: 'Монгол' },
   { value: 'zh', label: '简体中文' },
   { value: 'hi', label: 'हिन्दी' },
   { value: 'mr', label: 'मराठी' },
